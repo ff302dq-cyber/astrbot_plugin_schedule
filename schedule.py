@@ -219,7 +219,10 @@ class ScheduleGenerator:
         return events
 
     def _monitor_text(self, template: str) -> str:
-        return template.replace("{bot_name}", self.settings.bot_name)
+        if self.settings.bot_name:
+            return template.replace("{bot_name}", self.settings.bot_name)
+        # 名称留空时保留占位符，等实际事件到达后读取当前 Bot 昵称。
+        return template
 
 
 def sample_group_messages(messages: list, rate: float, fluctuation: float, rng=None) -> list:

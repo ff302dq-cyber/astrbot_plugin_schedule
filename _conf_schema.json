@@ -7,7 +7,7 @@
   "bot_name": {
     "description": "角色名称",
     "type": "string",
-    "hint": "用于监测器文案中的 {bot_name} 占位符，不要把角色名写死在代码中。",
+    "hint": "用于监测器文案中的 {bot_name} 占位符。留空时自动读取当前 Bot 的登录昵称。",
     "default": ""
   },
   "timezone": {

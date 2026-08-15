@@ -15,7 +15,7 @@ from astrbot.core.agent.message import TextPart
 
 from .config import PluginSettings, load_settings
 from .llm_service import LLMService
-from .models import PresenceState
+from .models import OfflineEvent, OfflineEventType, PresenceState
 from .prompts import pre_away_continuity_prompt, pre_away_prompt
 from .repository import Repository
 from .runtime import RuntimeService
@@ -27,7 +27,7 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "1.0.12",
+    "1.0.13",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -41,6 +41,7 @@ class TianganSchedulePlugin(Star):
         self._runtimes: dict[str, RuntimeService] = {}
         self._ticker: asyncio.Task | None = None
         self._closing = False
+        self._bot_display_names: dict[str, str] = {}
 
     async def initialize(self) -> None:
         try:
@@ -128,6 +129,87 @@ class TianganSchedulePlugin(Star):
             for component in (getattr(event.message_obj, "message", []) or [])
         ]
         return " ".join(names) or "[空消息]"
+
+    @staticmethod
+    def _has_message_content(event: AstrMessageEvent) -> bool:
+        return bool(
+            str(getattr(event, "message_str", "") or "").strip()
+            or (getattr(event.message_obj, "message", []) or [])
+        )
+
+    async def _bot_display_name(
+        self, event: AstrMessageEvent, bot_id: str
+    ) -> str:
+        configured = self._settings(bot_id).bot_name
+        if configured:
+            return configured
+        if cached := self._bot_display_names.get(bot_id):
+            return cached
+
+        for attr in ("self_name", "bot_name"):
+            value = str(getattr(event.message_obj, attr, "") or "").strip()
+            if value:
+                self._bot_display_names[bot_id] = value
+                return value
+
+        getter = getattr(event, "get_self_name", None)
+        if callable(getter):
+            try:
+                value = str(getter() or "").strip()
+                if value:
+                    self._bot_display_names[bot_id] = value
+                    return value
+            except Exception as exc:  # noqa: BLE001 - 兼容不同平台事件实现
+                logger.debug(f"[角色作息] 从事件读取 Bot 昵称失败：{exc}")
+
+        bot = getattr(event, "bot", None)
+        api = getattr(bot, "api", None)
+        call_action = getattr(api, "call_action", None)
+        if callable(call_action):
+            try:
+                result = await call_action("get_login_info")
+                data: Any = result
+                if isinstance(result, dict):
+                    data = result.get("data", result)
+                elif getattr(result, "data", None) is not None:
+                    data = result.data
+                if isinstance(data, dict):
+                    value = str(data.get("nickname", "") or "").strip()
+                    if value:
+                        self._bot_display_names[bot_id] = value
+                        return value
+            except Exception as exc:  # noqa: BLE001 - 昵称读取失败不影响离线拦截
+                logger.warning(f"[角色作息] 读取 Bot 昵称失败：{exc}")
+
+        fallback = "Bot"
+        self._bot_display_names[bot_id] = fallback
+        return fallback
+
+    def _monitor_templates(self, event: OfflineEvent, bot_id: str) -> tuple[str, ...]:
+        settings = self._settings(bot_id)
+        if event.event_type == OfflineEventType.NIGHT_SLEEP:
+            return settings.night_reason.monitor_messages
+        reason = next(
+            (item for item in settings.daytime_reasons if item.id == event.reason_id),
+            None,
+        )
+        return reason.monitor_messages if reason else ()
+
+    async def _render_monitor_text(
+        self, event: AstrMessageEvent, offline_event: OfflineEvent, bot_id: str
+    ) -> str:
+        text = offline_event.fixed_monitor_text
+        name = await self._bot_display_name(event, bot_id)
+        if "{bot_name}" in text:
+            return text.replace("{bot_name}", name)
+
+        # 兼容旧版本已经生成进 SQLite 的日程：当时角色名称留空会提前把
+        # 占位符替换为空。只在能与当前配置模板精确反向匹配时恢复名称。
+        if not self._settings(bot_id).bot_name:
+            for template in self._monitor_templates(offline_event, bot_id):
+                if "{bot_name}" in template and template.replace("{bot_name}", "") == text:
+                    return template.replace("{bot_name}", name)
+        return text
 
     @staticmethod
     def _directly_mentions_bot(event: AstrMessageEvent, bot_id: str) -> bool:
@@ -231,7 +313,11 @@ class TianganSchedulePlugin(Star):
             is_offline_wake = is_offline and bool(
                 getattr(event, "is_at_or_wake_command", False)
             )
-        if kind == "group" and not is_offline_wake:
+        if (
+            kind == "group"
+            and not is_offline_wake
+            and self._has_message_content(event)
+        ):
             await repo.save_group_context(
                 umo,
                 sender_id,
@@ -240,6 +326,13 @@ class TianganSchedulePlugin(Star):
                 message_time,
                 text,
             )
+
+        if is_offline and not is_offline_wake:
+            # 真正离线时，所有未明确唤醒的事件都在最高优先级静默终止。
+            # 这会覆盖戳一戳等通知事件，阻止低优先级插件直接调用 LLM。
+            event.should_call_llm(False)
+            event.stop_event()
+            return
 
         if not is_offline_wake:
             return
@@ -270,7 +363,10 @@ class TianganSchedulePlugin(Star):
         )
         if should_send_monitor:
             try:
-                await event.send(event.plain_result(offline_event.fixed_monitor_text))
+                monitor_text = await self._render_monitor_text(
+                    event, offline_event, bot_id
+                )
+                await event.send(event.plain_result(monitor_text))
                 if kind == "private":
                     await repo.mark_offline_monitor_sent(
                         offline_event.id, umo, now
@@ -286,14 +382,23 @@ class TianganSchedulePlugin(Star):
     async def on_llm_request(
         self, event: AstrMessageEvent, req: ProviderRequest
     ) -> None:
-        if self._message_kind(event) != "private":
-            return
         bot_id = str(event.get_self_id() or "")
         if not bot_id:
             return
         if not self._settings(bot_id).enabled or self.repository is None:
             return
         now = self._now(bot_id)
+        state = await self._runtime(bot_id).reconcile(bot_id, now)
+        if state in {
+            PresenceState.AWAY,
+            PresenceState.SLEEPING,
+            PresenceState.RETURNING,
+        }:
+            event.should_call_llm(False)
+            event.stop_event()
+            return
+        if self._message_kind(event) != "private":
+            return
         pre_away = await self._runtime(bot_id).refresh_pre_away_session(
             bot_id, str(event.unified_msg_origin), now
         )
