@@ -27,8 +27,8 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "1.0.0",
-    "",
+    "1.0.8",
+    "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -317,11 +317,6 @@ class TianganSchedulePlugin(Star):
             f"起床：{schedule.wake_at:%H:%M:%S}",
             f"睡觉：{schedule.sleep_at:%Y-%m-%d %H:%M:%S}",
         ]
-        for item in schedule.events:
-            if item.event_type.value == "daytime_away":
-                lines.append(
-                    f"离开：{item.start_at:%H:%M:%S}～{item.end_at:%H:%M:%S}（{item.reason_id}）"
-                )
         yield event.plain_result("\n".join(lines))
 
     async def terminate(self) -> None:
