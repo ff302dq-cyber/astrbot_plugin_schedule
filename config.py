@@ -28,16 +28,28 @@ def _number(data: Mapping[str, Any], key: str, default: float) -> float:
 
 
 def _reasons(raw: Any, defaults: tuple[Reason, ...]) -> tuple[Reason, ...]:
-    if not isinstance(raw, list):
+    if isinstance(raw, Mapping):
+        entries = []
+        for slot_id, value in raw.items():
+            if not isinstance(value, Mapping) or not bool(value.get("enabled", True)):
+                continue
+            item = dict(value)
+            item.setdefault("id", str(slot_id))
+            entries.append(item)
+    elif isinstance(raw, list):
+        entries = raw
+    else:
         return defaults
     parsed: list[Reason] = []
-    for index, item in enumerate(raw):
+    for index, item in enumerate(entries):
         if not isinstance(item, Mapping):
             continue
         reason_id = str(item.get("id", f"reason_{index + 1}") or "").strip()
         fact = str(item.get("pre_away_fact", "") or "").strip()
         messages = item.get("monitor_messages", [])
-        if not isinstance(messages, list):
+        if isinstance(messages, str):
+            messages = messages.splitlines()
+        elif not isinstance(messages, list):
             messages = []
         monitor = tuple(str(value).strip() for value in messages if str(value).strip())
         if reason_id and fact and monitor:
@@ -49,19 +61,19 @@ DEFAULT_DAYTIME_REASONS = (
     Reason(
         "dessert_shop",
         "几分钟后去甜品店，可能无法及时回复",
-        ("【小天干监测器提示】{bot_name}去甜品店了，不在手机跟前……",),
+        ("【作息监测器提示】{bot_name}去甜品店了，不在手机跟前……",),
     ),
     Reason(
         "daytime_nap",
         "几分钟后小睡一会儿，可能无法及时回复",
-        ("【小天干监测器提示】{bot_name}睡午觉去了，暂时没在看手机……",),
+        ("【作息监测器提示】{bot_name}睡午觉去了，暂时没在看手机……",),
     ),
 )
 
 DEFAULT_NIGHT_REASON = Reason(
     "night_sleep",
     "几分钟后准备睡觉，之后可能无法及时回复",
-    ("【小天干监测器提示】{bot_name}已经睡着了，暂时看不到消息……",),
+    ("【作息监测器提示】{bot_name}已经睡着了，暂时看不到消息……",),
 )
 
 
@@ -131,12 +143,12 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
         )
         night = night_items[0]
 
-    total_min = _integer(daytime, "total_minutes_min", 30)
-    total_max = max(total_min, _integer(daytime, "total_minutes_max", 120))
+    total_min = _integer(daytime, "total_minutes_min", 100)
+    total_max = max(total_min, _integer(daytime, "total_minutes_max", 300))
     segments_min = max(1, _integer(daytime, "segments_min", 1))
     segments_max = max(segments_min, _integer(daytime, "segments_max", 4))
-    segment_min = max(1, _integer(daytime, "segment_minutes_min", 10))
-    segment_max = max(segment_min, _integer(daytime, "segment_minutes_max", 60))
+    segment_min = max(1, _integer(daytime, "segment_minutes_min", 30))
+    segment_max = max(segment_min, _integer(daytime, "segment_minutes_max", 120))
     first_min = _integer(queue, "first_reply_delay_min_seconds", 20)
     first_max = max(first_min, _integer(queue, "first_reply_delay_max_seconds", 120))
     between_min = _integer(queue, "between_reply_delay_min_seconds", 8)
@@ -146,7 +158,7 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
 
     return PluginSettings(
         enabled=bool(config.get("enabled", True)),
-        bot_name=str(config.get("bot_name", "小天干") or "小天干").strip(),
+        bot_name=str(config.get("bot_name", "") or "").strip(),
         timezone=str(config.get("timezone", "Asia/Shanghai") or "Asia/Shanghai"),
         wake_start=str(wake.get("start", "08:00")),
         wake_end=str(wake.get("end", "10:00")),
@@ -182,33 +194,6 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
             1.0, _number(config, "scheduler_interval_seconds", 3.0)
         ),
         provider_id=str(config.get("provider_id", "") or "").strip(),
-        daytime_reasons=_reasons(reasons.get("daytime", []), DEFAULT_DAYTIME_REASONS),
+        daytime_reasons=_reasons(reasons.get("daytime", {}), DEFAULT_DAYTIME_REASONS),
         night_reason=night,
     )
-
-
-def _deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
-    result = dict(base)
-    for key, value in override.items():
-        if key in {"bot_id", "self_id"}:
-            continue
-        current = result.get(key)
-        if isinstance(current, Mapping) and isinstance(value, Mapping):
-            result[key] = _deep_merge(current, value)
-        else:
-            result[key] = value
-    return result
-
-
-def load_settings_for_bot(config: Mapping[str, Any], bot_id: str) -> PluginSettings:
-    """读取全局默认，并应用指定 self_id 的角色级覆盖。"""
-    profiles = config.get("bot_profiles", [])
-    merged: Mapping[str, Any] = config
-    if isinstance(profiles, list):
-        for profile in profiles:
-            if not isinstance(profile, Mapping):
-                continue
-            target = str(profile.get("bot_id", profile.get("self_id", "")) or "")
-            if target == bot_id:
-                merged = _deep_merge(merged, profile)
-    return load_settings(merged)

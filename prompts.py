@@ -7,7 +7,7 @@ from .models import MailboxMessage, OfflineEvent
 
 def pre_away_prompt(event: OfflineEvent) -> str:
     return f"""<tiangan_pre_away>
-你将在几分钟后{event.pre_away_fact}。
+你{event.pre_away_fact}。
 结合当前私聊内容，以角色自己的口吻自然、简短地提醒对方。
 只需一句，不要提系统、插件、状态机、监测器或准确倒计时。
 不得虚构未提供的行程。这项要求只作用于本次回复。

@@ -172,7 +172,7 @@ class RuntimeService:
                 await self.send_text(umo, text)
                 await self.repository.mark_notice_sent(event_id, umo, text, now)
             except Exception as exc:  # noqa: BLE001 - 单窗口失败不终止调度器
-                logger.error(f"[小天干作息] 私聊预告失败：{exc}", exc_info=True)
+                logger.error(f"[角色作息] 私聊预告失败：{exc}", exc_info=True)
                 await self.repository.release_notice(event_id, umo)
 
     def start_return(self, event_id: str) -> None:
@@ -214,7 +214,7 @@ class RuntimeService:
                 if chosen:
                     await self._generate_selected(event, chosen)
         except Exception as exc:  # noqa: BLE001 - 生成异常由持久状态恢复
-            logger.error(f"[小天干作息] 回归生成失败 event={event_id}: {exc}", exc_info=True)
+            logger.error(f"[角色作息] 回归生成失败 event={event_id}: {exc}", exc_info=True)
 
     async def _generate_selected(
         self, event: OfflineEvent, messages: list[MailboxMessage]
@@ -274,7 +274,7 @@ class RuntimeService:
                     item.id for item in window_messages
                 )
                 logger.error(
-                    f"[小天干作息] 窗口回归生成失败，已停止自动重试 umo={umo}: {exc}",
+                    f"[角色作息] 窗口回归生成失败，已停止自动重试 umo={umo}: {exc}",
                     exc_info=True,
                 )
 
@@ -311,7 +311,7 @@ class RuntimeService:
                 await self.repository.mark_reply_sent(reply.id, now)
                 await self._finish_if_idle(reply.offline_event_id, now)
             except Exception as exc:  # noqa: BLE001 - 单条失败不阻断后续队列
-                logger.error(f"[小天干作息] 回归回复发送失败：{exc}", exc_info=True)
+                logger.error(f"[角色作息] 回归回复发送失败：{exc}", exc_info=True)
                 await self.repository.mark_reply_failed(reply.id, str(exc))
 
     async def _finish_if_idle(self, event_id: str, now: datetime) -> None:

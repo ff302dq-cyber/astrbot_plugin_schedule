@@ -13,7 +13,7 @@ from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.agent.message import TextPart
 
-from .config import PluginSettings, load_settings, load_settings_for_bot
+from .config import PluginSettings, load_settings
 from .llm_service import LLMService
 from .models import PresenceState
 from .prompts import pre_away_prompt
@@ -35,7 +35,6 @@ class TianganSchedulePlugin(Star):
         super().__init__(context)
         self.config = config
         self.settings: PluginSettings = load_settings(config)
-        self._settings_by_bot: dict[str, PluginSettings] = {}
         self.repository: Repository | None = None
         self.llm: LLMService | None = None
         self.runtime: RuntimeService | None = None
@@ -54,18 +53,16 @@ class TianganSchedulePlugin(Star):
         self.repository = Repository(data_dir / "tiangan_schedule.sqlite3")
         self._ticker = asyncio.create_task(self._ticker_loop())
         logger.info(
-            f"[小天干作息] 插件已加载，AstrBot>=4.24.0，数据库={data_dir / 'tiangan_schedule.sqlite3'}"
+            f"[角色作息] 插件已加载，AstrBot>=4.24.0，数据库={data_dir / 'tiangan_schedule.sqlite3'}"
         )
 
     def _repo(self) -> Repository:
         if self.repository is None:
-            raise RuntimeError("小天干作息数据库尚未初始化")
+            raise RuntimeError("角色作息数据库尚未初始化")
         return self.repository
 
     def _settings(self, bot_id: str) -> PluginSettings:
-        if bot_id not in self._settings_by_bot:
-            self._settings_by_bot[bot_id] = load_settings_for_bot(self.config, bot_id)
-        return self._settings_by_bot[bot_id]
+        return self.settings
 
     def _runtime(self, bot_id: str) -> RuntimeService:
         # self.runtime 仅保留为测试和旧式单实例注入兼容口。
@@ -73,7 +70,7 @@ class TianganSchedulePlugin(Star):
             return self.runtime
         if bot_id not in self._runtimes:
             if self.repository is None:
-                raise RuntimeError("小天干作息运行服务尚未初始化")
+                raise RuntimeError("角色作息运行服务尚未初始化")
             settings = self._settings(bot_id)
             llm = LLMService(self.context, settings, self.repository)
             self._runtimes[bot_id] = RuntimeService(
@@ -144,7 +141,7 @@ class TianganSchedulePlugin(Star):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - 后台循环隔离单次故障
-                logger.error(f"[小天干作息] 后台轮询异常：{exc}", exc_info=True)
+                logger.error(f"[角色作息] 后台轮询异常：{exc}", exc_info=True)
             await asyncio.sleep(self.settings.scheduler_interval_seconds)
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10000)
@@ -213,7 +210,7 @@ class TianganSchedulePlugin(Star):
         try:
             await event.send(event.plain_result(offline_event.fixed_monitor_text))
         except Exception as exc:  # noqa: BLE001 - 发送失败仍必须拦截本次 LLM
-            logger.error(f"[小天干作息] 监测器提示发送失败：{exc}", exc_info=True)
+            logger.error(f"[角色作息] 监测器提示发送失败：{exc}", exc_info=True)
         event.should_call_llm(False)
         event.stop_event()
 
@@ -338,4 +335,4 @@ class TianganSchedulePlugin(Star):
             await runtime.shutdown()
         if self.repository:
             await self.repository.close()
-        logger.info("[小天干作息] 插件已卸载")
+        logger.info("[角色作息] 插件已卸载")

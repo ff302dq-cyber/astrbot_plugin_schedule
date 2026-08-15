@@ -1,6 +1,6 @@
 {
   "enabled": {
-    "description": "启用小天干作息",
+    "description": "启用角色作息与离线信箱",
     "type": "bool",
     "default": true
   },
@@ -8,7 +8,7 @@
     "description": "角色名称",
     "type": "string",
     "hint": "用于监测器文案中的 {bot_name} 占位符，不要把角色名写死在代码中。",
-    "default": "小天干"
+    "default": ""
   },
   "timezone": {
     "description": "作息时区",
@@ -22,26 +22,22 @@
     "default": "",
     "_special": "select_provider"
   },
-  "bot_profiles": {
-    "description": "按 Bot self_id 覆盖配置",
-    "type": "list",
-    "hint": "同一 AstrBot 连接多个角色 Bot 时使用。每项填写 bot_id，并可覆盖 bot_name、wake_window、sleep_window、daytime_away、pre_away、group_return、return_queue、reasons、provider_id 等同名字段；未写字段继承全局默认。",
-    "default": []
-  },
   "wake_window": {
-    "description": "每日起床区间",
+    "description": "每日起床随机区间",
+    "hint": "每天会在最早和最晚时间之间随机抽取一个起床时刻。默认 08:00～10:00，即每日最多浮动 2 小时。",
     "type": "object",
     "items": {
-      "start": {"description": "开始", "type": "string", "default": "08:00"},
-      "end": {"description": "结束", "type": "string", "default": "10:00"}
+      "start": {"description": "最早可能时间", "type": "string", "hint": "格式 HH:MM", "default": "08:00"},
+      "end": {"description": "最晚可能时间", "type": "string", "hint": "实际时间会在最早与最晚之间随机抽取。", "default": "10:00"}
     }
   },
   "sleep_window": {
-    "description": "每日睡觉区间（允许跨午夜）",
+    "description": "每日睡觉随机区间（允许跨午夜）",
+    "hint": "每天会在最早和最晚时间之间随机抽取一个睡觉时刻。默认 23:00～次日 01:00，即最多浮动 2 小时。",
     "type": "object",
     "items": {
-      "start": {"description": "开始", "type": "string", "default": "23:00"},
-      "end": {"description": "结束", "type": "string", "default": "01:00"}
+      "start": {"description": "最早可能时间", "type": "string", "hint": "格式 HH:MM", "default": "23:00"},
+      "end": {"description": "最晚可能时间", "type": "string", "hint": "时间早于或等于最早时间时按次日计算。", "default": "01:00"}
     }
   },
   "daytime_away": {
@@ -49,12 +45,12 @@
     "type": "object",
     "items": {
       "enabled": {"description": "启用", "type": "bool", "default": true},
-      "total_minutes_min": {"description": "每日总时长最小分钟", "type": "int", "default": 30},
-      "total_minutes_max": {"description": "每日总时长最大分钟", "type": "int", "default": 120},
+      "total_minutes_min": {"description": "每日总时长最小分钟", "type": "int", "default": 100},
+      "total_minutes_max": {"description": "每日总时长最大分钟", "type": "int", "default": 300},
       "segments_min": {"description": "最少段数", "type": "int", "default": 1},
       "segments_max": {"description": "最多段数", "type": "int", "default": 4},
-      "segment_minutes_min": {"description": "单段最短分钟", "type": "int", "default": 10},
-      "segment_minutes_max": {"description": "单段最长分钟", "type": "int", "default": 60}
+      "segment_minutes_min": {"description": "单段最短分钟", "type": "int", "default": 30},
+      "segment_minutes_max": {"description": "单段最长分钟", "type": "int", "default": 120}
     }
   },
   "pre_away": {
@@ -98,21 +94,46 @@
     "type": "object",
     "items": {
       "daytime": {
-        "description": "白天原因列表",
-        "type": "list",
-        "hint": "每项需包含 id、pre_away_fact、monitor_messages。监测器文案可使用 {bot_name}。",
-        "default": [
-          {
-            "id": "dessert_shop",
-            "pre_away_fact": "几分钟后去甜品店，可能无法及时回复",
-            "monitor_messages": ["【小天干监测器提示】{bot_name}去甜品店了，不在手机跟前……"]
+        "description": "白天离开原因",
+        "type": "object",
+        "items": {
+          "reason_1": {
+            "description": "原因 1",
+            "type": "object",
+            "items": {
+              "enabled": {"description": "启用", "type": "bool", "default": true},
+              "pre_away_fact": {"description": "离开前提供给模型的事实", "type": "text", "default": "几分钟后去甜品店，可能无法及时回复"},
+              "monitor_messages": {"description": "固定监测器文案池", "type": "text", "hint": "每行一条；每段离线随机选一条并固定。可使用 {bot_name}，角色名称留空时占位符替换为空。", "default": "【作息监测器提示】{bot_name}去甜品店了，不在手机跟前……"}
+            }
           },
-          {
-            "id": "daytime_nap",
-            "pre_away_fact": "几分钟后小睡一会儿，可能无法及时回复",
-            "monitor_messages": ["【小天干监测器提示】{bot_name}睡午觉去了，暂时没在看手机……"]
+          "reason_2": {
+            "description": "原因 2",
+            "type": "object",
+            "items": {
+              "enabled": {"description": "启用", "type": "bool", "default": true},
+              "pre_away_fact": {"description": "离开前提供给模型的事实", "type": "text", "default": "几分钟后小睡一会儿，可能无法及时回复"},
+              "monitor_messages": {"description": "固定监测器文案池", "type": "text", "hint": "每行一条。", "default": "【作息监测器提示】{bot_name}睡午觉去了，暂时没在看手机……"}
+            }
+          },
+          "reason_3": {
+            "description": "自定义原因 3",
+            "type": "object",
+            "items": {
+              "enabled": {"description": "启用", "type": "bool", "default": false},
+              "pre_away_fact": {"description": "离开前提供给模型的事实", "type": "text", "default": ""},
+              "monitor_messages": {"description": "固定监测器文案池", "type": "text", "hint": "每行一条。", "default": ""}
+            }
+          },
+          "reason_4": {
+            "description": "自定义原因 4",
+            "type": "object",
+            "items": {
+              "enabled": {"description": "启用", "type": "bool", "default": false},
+              "pre_away_fact": {"description": "离开前提供给模型的事实", "type": "text", "default": ""},
+              "monitor_messages": {"description": "固定监测器文案池", "type": "text", "hint": "每行一条。", "default": ""}
+            }
           }
-        ]
+        }
       },
       "night_sleep": {
         "description": "夜间睡眠",
@@ -121,8 +142,9 @@
           "pre_away_fact": {"description": "预告事实", "type": "string", "default": "几分钟后准备睡觉，之后可能无法及时回复"},
           "monitor_messages": {
             "description": "固定监测器文案池",
-            "type": "list",
-            "default": ["【小天干监测器提示】{bot_name}已经睡着了，暂时看不到消息……"]
+            "type": "text",
+            "hint": "每行一条；每天睡眠开始时随机选一条并固定。",
+            "default": "【作息监测器提示】{bot_name}已经睡着了，暂时看不到消息……"
           }
         }
       }

@@ -107,9 +107,7 @@ class ScheduleGenerator:
         self, schedule: DailySchedule, next_wake_at: datetime
     ) -> OfflineEvent:
         reason = self.settings.night_reason
-        monitor = self.rng.choice(reason.monitor_messages).format(
-            bot_name=self.settings.bot_name
-        )
+        monitor = self._monitor_text(self.rng.choice(reason.monitor_messages))
         return OfflineEvent(
             id=f"sleep-{schedule.bot_id}-{schedule.schedule_date}",
             bot_id=schedule.bot_id,
@@ -170,9 +168,7 @@ class ScheduleGenerator:
         events: list[OfflineEvent] = []
         for segment_start, segment_end in segments:
             reason = self.rng.choice(self.settings.daytime_reasons)
-            monitor = self.rng.choice(reason.monitor_messages).format(
-                bot_name=self.settings.bot_name
-            )
+            monitor = self._monitor_text(self.rng.choice(reason.monitor_messages))
             events.append(
                 OfflineEvent(
                     id=f"away-{bot_id}-{day.isoformat()}-{uuid4().hex[:12]}",
@@ -187,6 +183,9 @@ class ScheduleGenerator:
                 )
             )
         return events
+
+    def _monitor_text(self, template: str) -> str:
+        return template.replace("{bot_name}", self.settings.bot_name)
 
 
 def sample_group_messages(messages: list, rate: float, fluctuation: float, rng=None) -> list:

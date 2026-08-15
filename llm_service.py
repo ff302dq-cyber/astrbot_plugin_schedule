@@ -29,7 +29,7 @@ class LLMService:
                 if self.context.get_provider_by_id(self.settings.provider_id):
                     return self.settings.provider_id
             except Exception:  # noqa: BLE001 - 小版本 Provider 注册表异常类型不固定
-                logger.warning("[小天干作息] 配置的 Provider 不可用，回退当前会话模型")
+                logger.warning("[角色作息] 配置的 Provider 不可用，回退当前会话模型")
         provider_id = await self.context.get_current_chat_provider_id(umo=umo)
         if not provider_id:
             raise RuntimeError(f"会话 {umo} 没有可用的聊天模型")
@@ -41,7 +41,7 @@ class LLMService:
             if isinstance(persona, dict):
                 return str(persona.get("prompt", "") or "")
         except Exception as exc:  # noqa: BLE001 - 人格缺失时允许回退
-            logger.warning(f"[小天干作息] 获取会话人格失败：{exc}")
+            logger.warning(f"[角色作息] 获取会话人格失败：{exc}")
         return ""
 
     async def _contexts(self, umo: str) -> list[dict]:
@@ -54,7 +54,7 @@ class LLMService:
             history = json.loads(conversation.history or "[]") if conversation else []
             return history if isinstance(history, list) else []
         except Exception as exc:  # noqa: BLE001 - 历史损坏时仍应能够回归
-            logger.warning(f"[小天干作息] 读取会话历史失败：{exc}")
+            logger.warning(f"[角色作息] 读取会话历史失败：{exc}")
             return []
 
     async def _generate(self, umo: str, prompt: str, include_history: bool = True) -> str:
@@ -119,7 +119,7 @@ class LLMService:
                 ),
             )
         except Exception as exc:  # noqa: BLE001 - 历史接口失败不能阻断已发送回复
-            logger.warning(f"[小天干作息] 私聊回归写入会话历史失败：{exc}")
+            logger.warning(f"[角色作息] 私聊回归写入会话历史失败：{exc}")
 
     @staticmethod
     def _parse_group_json(raw: str) -> dict[str, str]:
@@ -132,7 +132,7 @@ class LLMService:
         try:
             data = json.loads(cleaned)
         except (TypeError, json.JSONDecodeError):
-            logger.error("[小天干作息] 群回归结构化输出解析失败，已使用安全回退")
+            logger.error("[角色作息] 群回归结构化输出解析失败，已使用安全回退")
             return {}
         replies = data.get("replies", []) if isinstance(data, dict) else []
         if not isinstance(replies, list):
