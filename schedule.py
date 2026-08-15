@@ -14,6 +14,7 @@ from .models import DailySchedule, OfflineEvent, OfflineEventType
 class RandomSource(Protocol):
     def randint(self, a: int, b: int) -> int: ...
     def choice(self, seq): ...
+    def sample(self, population, k: int): ...
 
 
 def parse_clock(value: str) -> time:
@@ -57,18 +58,11 @@ def _split_total(total: int, count: int, minimum: int, maximum: int, rng: Random
     return durations
 
 
-def _place_segments(
+def _segments_from_gaps(
     start: datetime,
-    end: datetime,
     durations: list[int],
-    rng: RandomSource,
+    gaps: list[int],
 ) -> list[tuple[datetime, datetime]]:
-    occupied = sum(durations)
-    available = max(0, int((end - start).total_seconds() // 60))
-    slack = max(0, available - occupied)
-    gaps = [0] * (len(durations) + 1)
-    for _ in range(slack):
-        gaps[rng.randint(0, len(gaps) - 1)] += 1
     cursor = start + timedelta(minutes=gaps[0])
     result = []
     for index, duration in enumerate(durations):
@@ -76,6 +70,40 @@ def _place_segments(
         result.append((cursor, segment_end))
         cursor = segment_end + timedelta(minutes=gaps[index + 1])
     return result
+
+
+def _place_segments(
+    start: datetime,
+    end: datetime,
+    durations: list[int],
+    rng: RandomSource,
+    mode: str,
+) -> list[tuple[datetime, datetime]]:
+    if not durations:
+        return []
+    occupied = sum(durations)
+    available = max(0, int((end - start).total_seconds() // 60))
+    slack = max(0, available - occupied)
+    gap_count = len(durations) + 1
+
+    if mode == "free_random":
+        # Uniformly choose one stars-and-bars composition of all free minutes.
+        # This permits clustering, consecutive segments, and one large empty gap.
+        bars = sorted(rng.sample(range(slack + gap_count - 1), gap_count - 1))
+        gaps: list[int] = []
+        previous = -1
+        for bar in bars:
+            gaps.append(bar - previous - 1)
+            previous = bar
+        gaps.append(slack + gap_count - 2 - previous)
+    else:
+        # Assign each free minute independently to a gap. The resulting
+        # multinomial distribution tends to keep gaps relatively balanced.
+        gaps = [0] * gap_count
+        for _ in range(slack):
+            gaps[rng.randint(0, gap_count - 1)] += 1
+
+    return _segments_from_gaps(start, durations, gaps)
 
 
 class ScheduleGenerator:
@@ -164,7 +192,13 @@ class ScheduleGenerator:
             self.settings.segment_minutes_max,
             self.rng,
         )
-        segments = _place_segments(start, end, durations, self.rng)
+        segments = _place_segments(
+            start,
+            end,
+            durations,
+            self.rng,
+            self.settings.daytime_placement_mode,
+        )
         events: list[OfflineEvent] = []
         for segment_start, segment_end in segments:
             reason = self.rng.choice(self.settings.daytime_reasons)

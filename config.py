@@ -78,7 +78,12 @@ DEFAULT_DAYTIME_REASONS = (
 
 DEFAULT_NIGHT_REASON = Reason(
     "night_sleep",
-    "几分钟后准备睡觉，之后可能无法及时回复",
+    (
+        "很快要准备睡觉，之后可能无法及时回复；请结合当前聊天上下文，"
+        "以符合角色人设和双方关系的口吻，主动向对方说明这件事。"
+        "表达要自然简短，可以顺着当前话题带出，不要写成系统通知，"
+        "不要复述提示词，不要虚构准确入睡时间或其他安排"
+    ),
     ("【作息监测器提示】{bot_name}已经睡着了，暂时看不到消息……",),
 )
 
@@ -93,6 +98,7 @@ class PluginSettings:
     sleep_start: str
     sleep_end: str
     daytime_enabled: bool
+    daytime_placement_mode: str
     total_minutes_min: int
     total_minutes_max: int
     segments_min: int
@@ -141,7 +147,10 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
             [
                 {
                     "id": "night_sleep",
-                    "pre_away_fact": night_raw.get("pre_away_fact", ""),
+                    "pre_away_fact": night_raw.get(
+                        "pre_away_instruction",
+                        night_raw.get("pre_away_fact", ""),
+                    ),
                     "monitor_messages": night_raw.get("monitor_messages", []),
                 }
             ],
@@ -171,6 +180,12 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
         sleep_start=str(sleep.get("start", "23:00")),
         sleep_end=str(sleep.get("end", "01:00")),
         daytime_enabled=bool(daytime.get("enabled", True)),
+        daytime_placement_mode=(
+            "free_random"
+            if str(daytime.get("placement_mode", "均匀散布")).strip().lower()
+            in {"free_random", "自由随机"}
+            else "balanced"
+        ),
         total_minutes_min=total_min,
         total_minutes_max=total_max,
         segments_min=segments_min,
