@@ -44,7 +44,7 @@ def _reasons(raw: Any, defaults: tuple[Reason, ...]) -> tuple[Reason, ...]:
     for index, item in enumerate(entries):
         if not isinstance(item, Mapping):
             continue
-        reason_id = str(item.get("id", f"reason_{index + 1}") or "").strip()
+        reason_id = str(item.get("id") or f"reason_{index + 1}").strip()
         fact = str(item.get("pre_away_fact", "") or "").strip()
         messages = item.get("monitor_messages", [])
         if isinstance(messages, str):
@@ -194,6 +194,6 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
             1.0, _number(config, "scheduler_interval_seconds", 3.0)
         ),
         provider_id=str(config.get("provider_id", "") or "").strip(),
-        daytime_reasons=_reasons(reasons.get("daytime", {}), DEFAULT_DAYTIME_REASONS),
+        daytime_reasons=_reasons(reasons.get("daytime", []), DEFAULT_DAYTIME_REASONS),
         night_reason=night,
     )

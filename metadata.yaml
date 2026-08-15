@@ -2,7 +2,7 @@ name: astrbot_plugin_tiangan_schedule
 display_name: 角色作息与离线信箱
 short_desc: 随机作息、离线监测器、离线信箱和拟人化回归回复。
 desc: 为角色 Bot 生成可恢复的每日作息，在离线时拦截唤醒消息并固定提示，回归后按规则抽样、合并和延迟回复。
-version: 1.0.2
+version: 1.0.3
 author: 菌菌
 repo: "https://github.com/ff302dq-cyber/astrbot_plugin_schedule"
 astrbot_version: ">=4.24.0"

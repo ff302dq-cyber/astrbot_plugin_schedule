@@ -94,46 +94,34 @@
     "type": "object",
     "items": {
       "daytime": {
-        "description": "白天离开原因",
-        "type": "object",
-        "items": {
-          "reason_1": {
-            "description": "原因 1",
-            "type": "object",
+        "description": "白天离开原因（可添加任意多条）",
+        "hint": "点击添加后逐条填写。插件每天会从所有有效原因中随机选择；原因数量不设上限。",
+        "type": "template_list",
+        "templates": {
+          "reason": {
+            "name": "离开原因",
+            "hint": "一条原因包含离开前事实和一组固定监测器文案。",
             "items": {
-              "enabled": {"description": "启用", "type": "bool", "default": true},
+              "id": {"description": "原因标识（可留空）", "type": "string", "hint": "留空时按列表位置自动生成，不影响使用。", "default": ""},
               "pre_away_fact": {"description": "离开前提供给模型的事实", "type": "text", "default": "几分钟后去甜品店，可能无法及时回复"},
               "monitor_messages": {"description": "固定监测器文案池", "type": "text", "hint": "每行一条；每段离线随机选一条并固定。可使用 {bot_name}，角色名称留空时占位符替换为空。", "default": "【作息监测器提示】{bot_name}去甜品店了，不在手机跟前……"}
             }
-          },
-          "reason_2": {
-            "description": "原因 2",
-            "type": "object",
-            "items": {
-              "enabled": {"description": "启用", "type": "bool", "default": true},
-              "pre_away_fact": {"description": "离开前提供给模型的事实", "type": "text", "default": "几分钟后小睡一会儿，可能无法及时回复"},
-              "monitor_messages": {"description": "固定监测器文案池", "type": "text", "hint": "每行一条。", "default": "【作息监测器提示】{bot_name}睡午觉去了，暂时没在看手机……"}
-            }
-          },
-          "reason_3": {
-            "description": "自定义原因 3",
-            "type": "object",
-            "items": {
-              "enabled": {"description": "启用", "type": "bool", "default": false},
-              "pre_away_fact": {"description": "离开前提供给模型的事实", "type": "text", "default": ""},
-              "monitor_messages": {"description": "固定监测器文案池", "type": "text", "hint": "每行一条。", "default": ""}
-            }
-          },
-          "reason_4": {
-            "description": "自定义原因 4",
-            "type": "object",
-            "items": {
-              "enabled": {"description": "启用", "type": "bool", "default": false},
-              "pre_away_fact": {"description": "离开前提供给模型的事实", "type": "text", "default": ""},
-              "monitor_messages": {"description": "固定监测器文案池", "type": "text", "hint": "每行一条。", "default": ""}
-            }
           }
-        }
+        },
+        "default": [
+          {
+            "__template_key": "reason",
+            "id": "dessert_shop",
+            "pre_away_fact": "几分钟后去甜品店，可能无法及时回复",
+            "monitor_messages": "【作息监测器提示】{bot_name}去甜品店了，不在手机跟前……"
+          },
+          {
+            "__template_key": "reason",
+            "id": "daytime_nap",
+            "pre_away_fact": "几分钟后小睡一会儿，可能无法及时回复",
+            "monitor_messages": "【作息监测器提示】{bot_name}睡午觉去了，暂时没在看手机……"
+          }
+        ]
       },
       "night_sleep": {
         "description": "夜间睡眠",
