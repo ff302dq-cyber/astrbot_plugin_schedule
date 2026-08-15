@@ -27,7 +27,7 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "1.0.9",
+    "1.0.10",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -284,25 +284,20 @@ class TianganSchedulePlugin(Star):
         )
         await self.context.send_message(umo, chain)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("作息状态")
     async def schedule_status(self, event: AstrMessageEvent):
         bot_id = str(event.get_self_id() or "")
         now = self._now(bot_id)
         state = await self._runtime(bot_id).reconcile(bot_id, now)
-        runtime = await self._repo().get_runtime(bot_id)
-        detail = ""
-        if runtime and runtime.current_event_id:
-            current = await self._repo().get_event(runtime.current_event_id)
-            if current:
-                detail = (
-                    f"\n当前事件：{current.reason_id}"
-                    f"\n开始：{current.start_at:%Y-%m-%d %H:%M:%S}"
-                    f"\n结束：{current.end_at:%Y-%m-%d %H:%M:%S}"
-                )
-        yield event.plain_result(f"当前状态：{state.value}{detail}")
+        label = {
+            PresenceState.ONLINE: "在线",
+            PresenceState.PRE_AWAY: "在线",
+            PresenceState.AWAY: "暂时离开",
+            PresenceState.SLEEPING: "睡觉",
+            PresenceState.RETURNING: "在线",
+        }.get(state, "在线")
+        yield event.plain_result(f"当前状态：{label}")
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("今日作息")
     async def today_schedule(self, event: AstrMessageEvent):
         bot_id = str(event.get_self_id() or "")
