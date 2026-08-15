@@ -16,7 +16,7 @@ from astrbot.core.agent.message import TextPart
 from .config import PluginSettings, load_settings
 from .llm_service import LLMService
 from .models import PresenceState
-from .prompts import pre_away_prompt
+from .prompts import pre_away_continuity_prompt, pre_away_prompt
 from .repository import Repository
 from .runtime import RuntimeService
 
@@ -27,7 +27,7 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "1.0.10",
+    "1.0.11",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -233,6 +233,9 @@ class TianganSchedulePlugin(Star):
             return
         umo = str(event.unified_msg_origin)
         if not await self._repo().claim_notice(pre_away.id, umo):
+            req.extra_user_content_parts.append(
+                TextPart(text=pre_away_continuity_prompt(pre_away)).mark_as_temp()
+            )
             return
         req.extra_user_content_parts.append(
             TextPart(text=pre_away_prompt(pre_away)).mark_as_temp()

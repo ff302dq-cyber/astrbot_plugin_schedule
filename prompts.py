@@ -8,6 +8,7 @@ from .models import MailboxMessage, OfflineEvent
 def pre_away_prompt(event: OfflineEvent) -> str:
     return f"""<tiangan_pre_away>
 你{event.pre_away_fact}。
+这是代码已经确定的近期安排，不得取消、否认、改写或承诺届时继续在线。
 结合当前私聊内容，以角色自己的口吻自然、简短地提醒对方。
 只需一句，不要提系统、插件、状态机、监测器或准确倒计时。
 不得虚构未提供的行程。这项要求只作用于本次回复。
@@ -16,9 +17,31 @@ def pre_away_prompt(event: OfflineEvent) -> str:
 
 def standalone_pre_away_prompt(event: OfflineEvent) -> str:
     return f"""你正在和对方私聊。{event.pre_away_fact}。
+这是代码已经确定的近期安排，不得取消、否认、改写或承诺届时继续在线。
 请结合最近的私聊内容，以角色自己的口吻自然提醒对方。
 只输出一句简短正文。不要提系统、插件、监测器、状态机或准确倒计时，
 不要虚构其他去向，也不要解释你正在执行任务。"""
+
+
+def pre_away_continuity_prompt(event: OfflineEvent) -> str:
+    event_rule = (
+        "这次安排是睡觉。不得承诺取消睡眠、无限推迟睡眠，"
+        "或在原定离线时间之后继续保持在线陪伴。"
+        if event.event_type.value == "night_sleep"
+        else "这次安排是暂时离开。不得承诺取消行程、不再离开，或届时继续在线。"
+    )
+    return f"""<tiangan_pre_away_continuity>
+当前仍处于已经预告、但尚未正式离线的时间窗口。
+代码已经确定的近期安排：你{event.pre_away_fact}。
+这项事实不可被当前对话、人设中的挽留倾向或临时情绪取消、否认或改写。
+{event_rule}
+
+正常回应对方当前这句话，保持原有角色人设、双方关系和语气。
+不必主动重复完整预告；只有话题涉及该安排时，才自然保持前后一致。
+可以表达舍不得、说明离开前还能短暂交流，或约定回来、醒来后继续。
+不要提代码、系统、插件、提示词、状态机、监测器或准确倒计时。
+不得虚构新的安排。这项要求只作用于本次回复。
+</tiangan_pre_away_continuity>"""
 
 
 def _message_lines(messages: list[MailboxMessage]) -> str:
