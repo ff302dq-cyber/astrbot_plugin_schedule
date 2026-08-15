@@ -121,6 +121,27 @@ DEFAULT_NIGHT_REASON = Reason(
     ("【作息监测器提示】{bot_name}已经睡着了，暂时看不到消息……",),
 )
 
+DEFAULT_OFFLINE_ALLOWED_COMMANDS = (
+    "查看核心记忆",
+    "记忆总结",
+    "查看总结进度",
+)
+
+
+def _command_list(raw: Any) -> tuple[str, ...]:
+    if isinstance(raw, str):
+        values = raw.splitlines()
+    elif isinstance(raw, (list, tuple)):
+        values = raw
+    else:
+        return DEFAULT_OFFLINE_ALLOWED_COMMANDS
+    result: list[str] = []
+    for value in values:
+        command = " ".join(str(value or "").strip().split())
+        if command and command not in result:
+            result.append(command)
+    return tuple(result)
+
 
 @dataclass(frozen=True, slots=True)
 class PluginSettings:
@@ -154,6 +175,7 @@ class PluginSettings:
     long_text_threshold: int
     scheduler_interval_seconds: float
     provider_id: str
+    offline_allowed_commands: tuple[str, ...]
     daytime_reasons: tuple[Reason, ...]
     daytime_reasons_error: str
     night_reason: Reason
@@ -256,6 +278,9 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
             1.0, _number(config, "scheduler_interval_seconds", 3.0)
         ),
         provider_id=str(config.get("provider_id", "") or "").strip(),
+        offline_allowed_commands=_command_list(
+            config.get("offline_allowed_commands", DEFAULT_OFFLINE_ALLOWED_COMMANDS)
+        ),
         daytime_reasons=_reasons(daytime_reasons_raw, DEFAULT_DAYTIME_REASONS),
         daytime_reasons_error=_daytime_reasons_error(daytime_reasons_raw),
         night_reason=night,

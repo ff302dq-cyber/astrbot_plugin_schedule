@@ -22,6 +22,16 @@
     "default": "",
     "_special": "select_provider"
   },
+  "offline_allowed_commands": {
+    "description": "离开或睡眠时仍可使用的指令",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "obvious_hint": true,
+    "hint": "每项只填写指令名称，不要填写 /、+ 等唤醒前缀。私聊若已关闭“需要唤醒词”，可直接发送“查看核心记忆”；若私聊需要唤醒词则跟随 AstrBot 设置。群聊仍使用当前 AstrBot 唤醒词，例如自动放行 /查看核心记忆。支持带参数的指令。",
+    "default": ["查看核心记忆", "记忆总结", "查看总结进度"]
+  },
   "wake_window": {
     "description": "每日起床随机区间",
     "hint": "每天会在最早和最晚时间之间随机抽取一个起床时刻。默认 08:00～10:00，即每日最多浮动 2 小时。",

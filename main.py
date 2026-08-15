@@ -27,7 +27,7 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "1.0.13",
+    "1.0.15",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -259,6 +259,25 @@ class TianganSchedulePlugin(Star):
         # AstrBot 自己已经识别的唤醒词；插件不猜测也不写死具体前缀。
         return bool(getattr(event, "is_at_or_wake_command", False))
 
+    def _is_allowed_offline_command(
+        self, event: AstrMessageEvent, bot_id: str
+    ) -> bool:
+        # 私聊遵循 AstrBot 的 friend_message_needs_wake_prefix 判定：关闭时，
+        # 直接发送指令名称就是有效指令；开启时仍需 AstrBot 先认定为唤醒。
+        # 群聊则必须使用当前实例的实际唤醒词，插件不写死 /、+ 等前缀。
+        kind = self._message_kind(event)
+        astrbot_wake = bool(getattr(event, "is_at_or_wake_command", False))
+        if kind == "private":
+            if not astrbot_wake:
+                return False
+        elif not self._astrbot_wake_prefix_was_used(event):
+            return False
+        text = " ".join(str(getattr(event, "message_str", "") or "").strip().split())
+        for command in self._settings(bot_id).offline_allowed_commands:
+            if text == command or text.startswith(f"{command} "):
+                return True
+        return False
+
     async def _ticker_loop(self) -> None:
         while not self._closing:
             try:
@@ -305,6 +324,9 @@ class TianganSchedulePlugin(Star):
             PresenceState.SLEEPING,
             PresenceState.RETURNING,
         }
+        if is_offline and self._is_allowed_offline_command(event, bot_id):
+            event.set_extra("tiangan_offline_command_allowed", True)
+            return
         if kind == "group":
             is_offline_wake = is_offline and self._is_explicit_group_wake(
                 event, bot_id
@@ -389,6 +411,8 @@ class TianganSchedulePlugin(Star):
             return
         now = self._now(bot_id)
         state = await self._runtime(bot_id).reconcile(bot_id, now)
+        if event.get_extra("tiangan_offline_command_allowed"):
+            return
         if state in {
             PresenceState.AWAY,
             PresenceState.SLEEPING,
