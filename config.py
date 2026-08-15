@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -28,6 +29,11 @@ def _number(data: Mapping[str, Any], key: str, default: float) -> float:
 
 
 def _reasons(raw: Any, defaults: tuple[Reason, ...]) -> tuple[Reason, ...]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return defaults
     if isinstance(raw, Mapping):
         entries = []
         for slot_id, value in raw.items():
@@ -194,6 +200,9 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
             1.0, _number(config, "scheduler_interval_seconds", 3.0)
         ),
         provider_id=str(config.get("provider_id", "") or "").strip(),
-        daytime_reasons=_reasons(reasons.get("daytime", []), DEFAULT_DAYTIME_REASONS),
+        daytime_reasons=_reasons(
+            reasons.get("daytime_json", reasons.get("daytime", "")),
+            DEFAULT_DAYTIME_REASONS,
+        ),
         night_reason=night,
     )

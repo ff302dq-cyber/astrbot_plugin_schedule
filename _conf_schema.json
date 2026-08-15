@@ -93,29 +93,11 @@
     "description": "离线原因与固定监测器文案",
     "type": "object",
     "items": {
-      "daytime": {
-        "description": "白天离开原因 JSON 列表",
-        "hint": "每个 {...} 是一条原因，可复制或删除整段；数量不设上限。monitor_messages 是文案数组，可使用 {bot_name}。",
-        "type": "list",
-        "editor_mode": true,
-        "editor_language": "json",
-        "editor_theme": "vs-light",
-        "default": [
-          {
-            "id": "dessert_shop",
-            "pre_away_fact": "几分钟后去甜品店，可能无法及时回复",
-            "monitor_messages": [
-              "【作息监测器提示】{bot_name}去甜品店了，不在手机跟前……"
-            ]
-          },
-          {
-            "id": "daytime_nap",
-            "pre_away_fact": "几分钟后小睡一会儿，可能无法及时回复",
-            "monitor_messages": [
-              "【作息监测器提示】{bot_name}睡午觉去了，暂时没在看手机……"
-            ]
-          }
-        ]
+      "daytime_json": {
+        "description": "白天离开原因 JSON",
+        "hint": "这是普通多行文本框，不会加载代码编辑器。内容必须是 JSON 数组；每个 {...} 是一条原因，可复制或删除整段，数量不设上限。",
+        "type": "text",
+        "default": "[\n  {\n    \"id\": \"dessert_shop\",\n    \"pre_away_fact\": \"几分钟后去甜品店，可能无法及时回复\",\n    \"monitor_messages\": [\n      \"【作息监测器提示】{bot_name}去甜品店了，不在手机跟前……\"\n    ]\n  },\n  {\n    \"id\": \"daytime_nap\",\n    \"pre_away_fact\": \"几分钟后小睡一会儿，可能无法及时回复\",\n    \"monitor_messages\": [\n      \"【作息监测器提示】{bot_name}睡午觉去了，暂时没在看手机……\"\n    ]\n  }\n]"
       },
       "night_sleep": {
         "description": "夜间睡眠",
