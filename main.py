@@ -27,7 +27,7 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "1.0.11",
+    "1.0.12",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -129,6 +129,54 @@ class TianganSchedulePlugin(Star):
         ]
         return " ".join(names) or "[空消息]"
 
+    @staticmethod
+    def _directly_mentions_bot(event: AstrMessageEvent, bot_id: str) -> bool:
+        """Only a real At component aimed at this bot counts; Reply never does."""
+        for component in getattr(event.message_obj, "message", []) or []:
+            if isinstance(component, Comp.At) and str(
+                getattr(component, "qq", "") or ""
+            ) == str(bot_id):
+                return True
+        return False
+
+    @staticmethod
+    def _astrbot_wake_prefix_was_used(event: AstrMessageEvent) -> bool:
+        """Use AstrBot's preprocessing result instead of duplicating its prefix config."""
+        if not bool(getattr(event, "is_at_or_wake_command", False)):
+            return False
+        try:
+            original = event.get_extra("astrbot_original_message_str")
+        except Exception:  # noqa: BLE001 - 兼容缺少 extras 的适配器
+            original = None
+        current = str(getattr(event, "message_str", "") or "").strip()
+        if original is not None:
+            return str(original).strip() != current
+
+        # 兼容尚未写入 original extra 的 4.24 补丁版本：AstrBot 会从
+        # message_str 剥掉实际配置的唤醒前缀，但不会改原始 Plain 消息段。
+        original_plain = "".join(
+            str(getattr(component, "text", "") or "")
+            for component in (getattr(event.message_obj, "message", []) or [])
+            if isinstance(component, Comp.Plain)
+        ).strip()
+        return bool(current and original_plain != current and original_plain.endswith(current))
+
+    @classmethod
+    def _is_explicit_group_wake(
+        cls, event: AstrMessageEvent, bot_id: str
+    ) -> bool:
+        # AstrBot 的广义 wake 标志可能包含“仅引用 Bot 消息”；这里必须再收窄。
+        if cls._directly_mentions_bot(event, bot_id):
+            return True
+        if cls._astrbot_wake_prefix_was_used(event):
+            return True
+        components = getattr(event.message_obj, "message", []) or []
+        if any(isinstance(item, (Comp.Reply, Comp.At)) for item in components):
+            return False
+        # 老版本没有 original extra 时，纯文本消息的 broad wake 只能来自
+        # AstrBot 自己已经识别的唤醒词；插件不猜测也不写死具体前缀。
+        return bool(getattr(event, "is_at_or_wake_command", False))
+
     async def _ticker_loop(self) -> None:
         while not self._closing:
             try:
@@ -170,11 +218,19 @@ class TianganSchedulePlugin(Star):
         if kind == "private" and state == PresenceState.PRE_AWAY:
             await self._runtime(bot_id).refresh_pre_away_session(bot_id, umo, now)
 
-        is_offline_wake = state in {
+        is_offline = state in {
             PresenceState.AWAY,
             PresenceState.SLEEPING,
             PresenceState.RETURNING,
-        } and bool(getattr(event, "is_at_or_wake_command", False))
+        }
+        if kind == "group":
+            is_offline_wake = is_offline and self._is_explicit_group_wake(
+                event, bot_id
+            )
+        else:
+            is_offline_wake = is_offline and bool(
+                getattr(event, "is_at_or_wake_command", False)
+            )
         if kind == "group" and not is_offline_wake:
             await repo.save_group_context(
                 umo,
@@ -207,10 +263,22 @@ class TianganSchedulePlugin(Star):
             text,
             self._component_summary(event),
         )
-        try:
-            await event.send(event.plain_result(offline_event.fixed_monitor_text))
-        except Exception as exc:  # noqa: BLE001 - 发送失败仍必须拦截本次 LLM
-            logger.error(f"[角色作息] 监测器提示发送失败：{exc}", exc_info=True)
+        # 私聊同一离线事件只提示一次，后续消息仍进入信箱并继续阻止 LLM。
+        # 群聊只有明确 @ 当前 Bot 或使用 AstrBot 唤醒词时才到这里。
+        should_send_monitor = kind == "group" or await repo.claim_offline_monitor(
+            offline_event.id, umo
+        )
+        if should_send_monitor:
+            try:
+                await event.send(event.plain_result(offline_event.fixed_monitor_text))
+                if kind == "private":
+                    await repo.mark_offline_monitor_sent(
+                        offline_event.id, umo, now
+                    )
+            except Exception as exc:  # noqa: BLE001 - 发送失败仍必须拦截本次 LLM
+                if kind == "private":
+                    await repo.release_offline_monitor(offline_event.id, umo)
+                logger.error(f"[角色作息] 监测器提示发送失败：{exc}", exc_info=True)
         event.should_call_llm(False)
         event.stop_event()
 

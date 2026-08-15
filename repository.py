@@ -70,6 +70,11 @@ class Repository:
                 due_at TEXT NOT NULL, generated_text TEXT NOT NULL DEFAULT '', sent_at TEXT,
                 PRIMARY KEY(offline_event_id, umo)
             );
+            CREATE TABLE IF NOT EXISTS offline_monitor_notice (
+                offline_event_id TEXT NOT NULL, umo TEXT NOT NULL, state TEXT NOT NULL,
+                sent_at TEXT,
+                PRIMARY KEY(offline_event_id, umo)
+            );
             CREATE TABLE IF NOT EXISTS mailbox_message (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, offline_event_id TEXT NOT NULL,
                 umo TEXT NOT NULL, message_kind TEXT NOT NULL, group_id TEXT NOT NULL DEFAULT '',
@@ -325,6 +330,37 @@ class Repository:
             self._conn.execute(
                 "UPDATE pre_away_notice SET state='SKIPPED' WHERE offline_event_id=? AND state='PENDING'",
                 (event_id,),
+            )
+            self._conn.commit()
+
+    async def claim_offline_monitor(self, event_id: str, umo: str) -> bool:
+        """Atomically reserve the one monitor notice for a private offline session."""
+        async with self._lock:
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO offline_monitor_notice(offline_event_id,umo,state) "
+                "VALUES(?,?,'CLAIMED')",
+                (event_id, umo),
+            )
+            self._conn.commit()
+            return bool(cursor.rowcount)
+
+    async def mark_offline_monitor_sent(
+        self, event_id: str, umo: str, now: datetime
+    ) -> None:
+        async with self._lock:
+            self._conn.execute(
+                "UPDATE offline_monitor_notice SET state='SENT',sent_at=? "
+                "WHERE offline_event_id=? AND umo=?",
+                (_iso(now), event_id, umo),
+            )
+            self._conn.commit()
+
+    async def release_offline_monitor(self, event_id: str, umo: str) -> None:
+        async with self._lock:
+            self._conn.execute(
+                "DELETE FROM offline_monitor_notice "
+                "WHERE offline_event_id=? AND umo=? AND state='CLAIMED'",
+                (event_id, umo),
             )
             self._conn.commit()
 
