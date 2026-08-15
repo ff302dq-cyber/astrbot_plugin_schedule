@@ -63,6 +63,40 @@ def _reasons(raw: Any, defaults: tuple[Reason, ...]) -> tuple[Reason, ...]:
     return tuple(parsed) or defaults
 
 
+def _daytime_reasons_error(raw: Any) -> str:
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        # Compatibility with list/object values saved by older plugin versions.
+        return ""
+    if not raw.strip():
+        return "内容为空；顶层必须是一个 JSON 数组。"
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return f"第 {exc.lineno} 行、第 {exc.colno} 列：{exc.msg}"
+    if not isinstance(parsed, list):
+        return "顶层必须是 JSON 数组 [...]。"
+    if not parsed:
+        return "原因数组不能为空。"
+    for index, item in enumerate(parsed, start=1):
+        if not isinstance(item, Mapping):
+            return f"第 {index} 条原因必须是 JSON 对象 {{...}}。"
+        fact = str(item.get("pre_away_fact", "") or "").strip()
+        if not fact:
+            return f"第 {index} 条原因缺少非空的 pre_away_fact。"
+        messages = item.get("monitor_messages", [])
+        if isinstance(messages, str):
+            valid_messages = [line for line in messages.splitlines() if line.strip()]
+        elif isinstance(messages, list):
+            valid_messages = [value for value in messages if str(value).strip()]
+        else:
+            valid_messages = []
+        if not valid_messages:
+            return f"第 {index} 条原因缺少非空的 monitor_messages 数组。"
+    return ""
+
+
 DEFAULT_DAYTIME_REASONS = (
     Reason(
         "dessert_shop",
@@ -121,6 +155,7 @@ class PluginSettings:
     scheduler_interval_seconds: float
     provider_id: str
     daytime_reasons: tuple[Reason, ...]
+    daytime_reasons_error: str
     night_reason: Reason
 
     @property
@@ -139,6 +174,12 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
     group = _section(config, "group_return")
     queue = _section(config, "return_queue")
     reasons = _section(config, "reasons")
+    if "daytime_json" in reasons:
+        daytime_reasons_raw = reasons.get("daytime_json")
+    elif "daytime" in reasons:
+        daytime_reasons_raw = reasons.get("daytime")
+    else:
+        daytime_reasons_raw = None
 
     night_raw = reasons.get("night_sleep", {})
     night = DEFAULT_NIGHT_REASON
@@ -215,9 +256,7 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
             1.0, _number(config, "scheduler_interval_seconds", 3.0)
         ),
         provider_id=str(config.get("provider_id", "") or "").strip(),
-        daytime_reasons=_reasons(
-            reasons.get("daytime_json", reasons.get("daytime", "")),
-            DEFAULT_DAYTIME_REASONS,
-        ),
+        daytime_reasons=_reasons(daytime_reasons_raw, DEFAULT_DAYTIME_REASONS),
+        daytime_reasons_error=_daytime_reasons_error(daytime_reasons_raw),
         night_reason=night,
     )

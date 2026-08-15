@@ -27,7 +27,7 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "1.0.8",
+    "1.0.9",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -317,6 +317,15 @@ class TianganSchedulePlugin(Star):
             f"起床：{schedule.wake_at:%H:%M:%S}",
             f"睡觉：{schedule.sleep_at:%Y-%m-%d %H:%M:%S}",
         ]
+        if self.settings.daytime_reasons_error:
+            lines.extend(
+                [
+                    "",
+                    "⚠ 白天离开原因 JSON 配置错误",
+                    self.settings.daytime_reasons_error,
+                    "请在插件配置中修正“白天离开原因 JSON”，保存并重载插件。",
+                ]
+            )
         yield event.plain_result("\n".join(lines))
 
     async def terminate(self) -> None:
