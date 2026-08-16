@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from astrbot.api import logger
 
 from .config import PluginSettings
-from .llm_service import LLMService, group_by_sender
+from .llm_service import LLMService, group_by_sender, normalize_notice
 from .models import (
     DailySchedule,
     MailboxMessage,
@@ -182,7 +182,7 @@ class RuntimeService:
 
     async def _prepare_notices(self, event: OfflineEvent, now: datetime) -> None:
         since = now - timedelta(minutes=self.settings.active_private_window_minutes)
-        sessions = await self.repository.active_private_sessions(event.bot_id, since)
+        sessions = await self.repository.active_pre_away_sessions(event.bot_id, since)
         due = min(
             now + timedelta(seconds=self.settings.pre_away_fallback_seconds),
             event.start_at - timedelta(seconds=2),
@@ -216,12 +216,21 @@ class RuntimeService:
                 if event:
                     await self.repository.expire_notices(event.id)
                 continue
+            last_seen = await self.repository.session_last_seen(umo)
+            active_since = now - timedelta(
+                minutes=self.settings.active_private_window_minutes
+            )
+            if last_seen is None or last_seen < active_since:
+                await self.repository.skip_notice(event_id, umo)
+                continue
             if not await self.repository.claim_notice(event_id, umo):
                 continue
             try:
-                text = await self.llm.pre_away(event, umo)
-                if not text:
-                    raise RuntimeError("模型返回空预告")
+                message_kind = await self.repository.session_kind(umo) or "private"
+                text = normalize_notice(
+                    await self.llm.pre_away(event, umo, message_kind),
+                    "我等会要离开一下，可能不看手机了",
+                )
                 await self.send_text(umo, text)
                 await self.repository.mark_notice_sent(event_id, umo, text, now)
             except Exception as exc:  # noqa: BLE001 - 单窗口失败不终止调度器
@@ -282,9 +291,35 @@ class RuntimeService:
                     text = await self.llm.private_return(event, umo, window_messages)
                     if not text:
                         raise RuntimeError("私聊回归模型返回空内容")
-                    scheduled += timedelta(
-                        seconds=self._delay(True, window_messages, text)
-                    )
+                    if not await self.repository.has_return_notice(event.id, umo):
+                        notice_fallback = (
+                            "醒了"
+                            if event.event_type == OfflineEventType.NIGHT_SLEEP
+                            else "刚回来"
+                        )
+                        notice = normalize_notice(
+                            await self.llm.return_notice(event, umo), notice_fallback
+                        )
+                        scheduled += timedelta(
+                            seconds=self._delay(True, window_messages, notice)
+                        )
+                        await self.repository.add_return_reply(
+                            event.id,
+                            umo,
+                            "private_notice",
+                            window_messages[-1].sender_id,
+                            [],
+                            "",
+                            notice,
+                            scheduled,
+                        )
+                        scheduled += timedelta(
+                            seconds=self._delay(False, window_messages, text)
+                        )
+                    else:
+                        scheduled += timedelta(
+                            seconds=self._delay(True, window_messages, text)
+                        )
                     await self.repository.add_return_reply(
                         event.id,
                         umo,
@@ -353,7 +388,7 @@ class RuntimeService:
                         reply.sender_id,
                         reply.generated_text,
                     )
-                else:
+                elif reply.message_kind == "private":
                     await self.send_text(reply.umo, reply.generated_text)
                     messages = await self.repository.mailbox_by_message_ids(
                         reply.offline_event_id, reply.source_message_ids
@@ -361,6 +396,8 @@ class RuntimeService:
                     await self.llm.record_private_return(
                         reply.umo, messages, reply.generated_text
                     )
+                else:
+                    await self.send_text(reply.umo, reply.generated_text)
                 await self.repository.mark_reply_sent(reply.id, now)
                 await self._finish_if_idle(reply.offline_event_id, now)
             except Exception as exc:  # noqa: BLE001 - 单条失败不阻断后续队列

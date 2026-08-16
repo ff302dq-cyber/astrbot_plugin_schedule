@@ -6,8 +6,10 @@ def test_defaults_are_valid():
     assert settings.timezone == "Asia/Shanghai"
     assert settings.bot_name == ""
     assert settings.sample_rate == 0.30
-    assert settings.total_minutes_min == 100
-    assert settings.total_minutes_max == 300
+    assert settings.total_minutes_min == 60
+    assert settings.total_minutes_max == 120
+    assert settings.segments_min == 1
+    assert settings.segments_max == 2
     assert settings.segment_minutes_min == 30
     assert settings.segment_minutes_max == 120
     assert settings.daytime_placement_mode == "balanced"

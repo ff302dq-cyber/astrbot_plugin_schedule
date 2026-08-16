@@ -12,9 +12,17 @@ from .models import MailboxMessage, OfflineEvent, OfflineEventType
 from .prompts import (
     group_return_prompt,
     private_return_prompt,
+    return_notice_prompt,
     standalone_pre_away_prompt,
 )
 from .repository import Repository
+
+NOTICE_MAX_CHARS = 30
+
+
+def normalize_notice(text: str, fallback: str) -> str:
+    normalized = " ".join(str(text or "").split()) or fallback
+    return normalized[:NOTICE_MAX_CHARS].rstrip()
 
 
 class LLMService:
@@ -72,8 +80,22 @@ class LLMService:
         response = await self.context.llm_generate(**kwargs)
         return str(getattr(response, "completion_text", "") or "").strip()
 
-    async def pre_away(self, event: OfflineEvent, umo: str) -> str:
-        return await self._generate(umo, standalone_pre_away_prompt(event))
+    async def pre_away(
+        self, event: OfflineEvent, umo: str, message_kind: str = "private"
+    ) -> str:
+        raw = await self._generate(
+            umo, standalone_pre_away_prompt(event, message_kind)
+        )
+        return normalize_notice(raw, "我等会要离开一下，可能不看手机了")
+
+    async def return_notice(self, event: OfflineEvent, umo: str) -> str:
+        raw = await self._generate(umo, return_notice_prompt(event))
+        fallback = (
+            "醒了"
+            if event.event_type == OfflineEventType.NIGHT_SLEEP
+            else "刚回来"
+        )
+        return normalize_notice(raw, fallback)
 
     async def private_return(
         self, event: OfflineEvent, umo: str, messages: list[MailboxMessage]

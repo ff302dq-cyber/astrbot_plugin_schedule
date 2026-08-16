@@ -230,10 +230,10 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
         )
         night = night_items[0]
 
-    total_min = _integer(daytime, "total_minutes_min", 100)
-    total_max = max(total_min, _integer(daytime, "total_minutes_max", 300))
+    total_min = _integer(daytime, "total_minutes_min", 60)
+    total_max = max(total_min, _integer(daytime, "total_minutes_max", 120))
     segments_min = max(1, _integer(daytime, "segments_min", 1))
-    segments_max = max(segments_min, _integer(daytime, "segments_max", 4))
+    segments_max = max(segments_min, _integer(daytime, "segments_max", 2))
     segment_min = max(1, _integer(daytime, "segment_minutes_min", 30))
     segment_max = max(segment_min, _integer(daytime, "segment_minutes_max", 120))
     first_min = _integer(queue, "first_reply_delay_min_seconds", 20)

@@ -20,6 +20,8 @@ class FakeLLM:
     def __init__(self):
         self.group_calls = 0
         self.private_calls = 0
+        self.return_notice_calls = 0
+        self.pre_away_kinds = []
 
     async def group_return(self, _event, _umo, messages):
         self.group_calls += 1
@@ -32,8 +34,13 @@ class FakeLLM:
         self.private_calls += 1
         return "合并回复：" + "、".join(item.plain_text for item in messages)
 
-    async def pre_away(self, _event, _umo):
+    async def pre_away(self, _event, _umo, message_kind="private"):
+        self.pre_away_kinds.append(message_kind)
         return "我一会儿要出去。"
+
+    async def return_notice(self, _event, _umo):
+        self.return_notice_calls += 1
+        return "刚才去看书了，刚回来。" + "补充" * 20
 
     async def record_private_return(self, _umo, _messages, _reply_text):
         return None
@@ -118,6 +125,8 @@ def test_private_return_uses_all_messages_in_one_call(tmp_path: Path):
                 "return_queue": {
                     "first_reply_delay_min_seconds": 0,
                     "first_reply_delay_max_seconds": 0,
+                    "between_reply_delay_min_seconds": 0,
+                    "between_reply_delay_max_seconds": 0,
                 }
             }
         )
@@ -155,8 +164,78 @@ def test_private_return_uses_all_messages_in_one_call(tmp_path: Path):
         await runtime._process_return(event.id)
         await runtime.process_due_replies(datetime.now(TZ) + timedelta(seconds=5))
         assert llm.private_calls == 1
-        assert len(sent) == 1
-        assert all(f"私聊{index}" in sent[0][1] for index in range(3))
+        assert llm.return_notice_calls == 1
+        assert len(sent) == 2
+        assert len(sent[0][1]) <= 30
+        assert "刚回来" in sent[0][1]
+        assert all(f"私聊{index}" in sent[1][1] for index in range(3))
+        await repo.close()
+
+    asyncio.run(scenario())
+
+
+def test_preaway_notices_recent_private_and_group_once_but_skips_stale_group(
+    tmp_path: Path,
+):
+    async def scenario():
+        settings = load_settings(
+            {
+                "pre_away": {
+                    "active_private_window_minutes": 5,
+                    "standalone_fallback_seconds": 0,
+                }
+            }
+        )
+        repo = Repository(tmp_path / "preaway.sqlite3")
+        now = datetime.now(TZ)
+        event = OfflineEvent(
+            "event-preaway",
+            "bot-1",
+            now.date().isoformat(),
+            OfflineEventType.DAYTIME_AWAY,
+            "reading",
+            "几分钟后去看书",
+            now + timedelta(minutes=5),
+            now + timedelta(minutes=35),
+            "暂时不在",
+        )
+        await repo.add_event(event)
+        await repo.touch_session("private-recent", "bot-1", "private", "", now)
+        await repo.touch_session("group-recent", "bot-1", "group", "100", now)
+        await repo.touch_session(
+            "group-expired-before-send",
+            "bot-1",
+            "group",
+            "150",
+            now - timedelta(minutes=4, seconds=30),
+        )
+        await repo.touch_session(
+            "group-stale",
+            "bot-1",
+            "group",
+            "200",
+            now - timedelta(minutes=6),
+        )
+        sent = []
+        llm = FakeLLM()
+
+        async def send_text(umo, text):
+            sent.append((umo, text))
+
+        async def send_reply(*_args):
+            raise AssertionError("预告不应走引用回复")
+
+        runtime = RuntimeService(
+            "bot-1", settings, repo, llm, send_text, send_reply, random.Random(4)
+        )
+        await runtime._prepare_notices(event, now)
+        send_time = now + timedelta(minutes=1)
+        await runtime.process_due_notices(send_time)
+        await runtime.process_due_notices(send_time)
+
+        assert {item[0] for item in sent} == {"private-recent", "group-recent"}
+        assert all(len(item[1]) <= 30 for item in sent)
+        assert sorted(llm.pre_away_kinds) == ["group", "private"]
         await repo.close()
 
     asyncio.run(scenario())

@@ -70,25 +70,30 @@
         "obvious_hint": true,
         "hint": "均匀散布：各段之间的空白时间倾向较平均，离开事件较少扎堆。自由随机：在所有可行的空白分配中随机选择，允许多段靠得很近、连续出现或集中在一天某一部分，变化更大。两种算法都遵守起床、睡觉、总时长、段数、单段时长和不重叠限制。只影响尚未写入数据库的新日程；插件通常会提前生成次日计划。"
       },
-      "total_minutes_min": {"description": "每日总时长最小分钟", "type": "int", "default": 100},
-      "total_minutes_max": {"description": "每日总时长最大分钟", "type": "int", "default": 300},
+      "total_minutes_min": {"description": "每日总时长最小分钟", "type": "int", "default": 60},
+      "total_minutes_max": {"description": "每日总时长最大分钟", "type": "int", "default": 120},
       "segments_min": {"description": "最少段数", "type": "int", "default": 1},
-      "segments_max": {"description": "最多段数", "type": "int", "default": 4},
+      "segments_max": {"description": "最多段数", "type": "int", "default": 2},
       "segment_minutes_min": {"description": "单段最短分钟", "type": "int", "default": 30},
       "segment_minutes_max": {"description": "单段最长分钟", "type": "int", "default": 120}
     }
   },
   "pre_away": {
-    "description": "离线前私聊预告",
+    "description": "离线前独立预告",
     "type": "object",
     "items": {
       "enabled": {"description": "启用", "type": "bool", "default": true},
       "advance_minutes": {"description": "提前分钟数", "type": "int", "default": 5},
-      "active_private_window_minutes": {"description": "私聊活跃判定分钟", "type": "int", "default": 5},
-      "standalone_fallback_seconds": {
-        "description": "等待正常回复顺带预告的秒数",
+      "active_private_window_minutes": {
+        "description": "私聊及群聊活跃判定分钟",
         "type": "int",
-        "hint": "超过该时间仍没有正常回复，插件为此私聊单独调用一次模型。",
+        "hint": "只向该时间范围内出现过消息的私聊或群聊会话发送独立预告。群聊超过 5 分钟没有新消息时不预告；同一次离开在同一群只发送一次。",
+        "default": 5
+      },
+      "standalone_fallback_seconds": {
+        "description": "独立预告等待秒数",
+        "type": "int",
+        "hint": "进入预告期后等待多少秒再发送独立预告。预告不会拼接到正常聊天回复中。",
         "default": 60
       }
     }

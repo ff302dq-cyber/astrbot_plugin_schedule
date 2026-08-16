@@ -10,7 +10,7 @@ from typing import Any
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api import message_components as Comp
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.provider import LLMResponse, ProviderRequest
+from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.agent.message import TextPart
 
@@ -22,7 +22,7 @@ from .availability import (
 from .config import PluginSettings, load_settings
 from .llm_service import LLMService
 from .models import OfflineEvent, OfflineEventType, PresenceState
-from .prompts import pre_away_continuity_prompt, pre_away_prompt
+from .prompts import pre_away_continuity_prompt
 from .repository import Repository
 from .runtime import RuntimeService
 
@@ -33,7 +33,7 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "2.2",
+    "2.3",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -424,7 +424,7 @@ class TianganSchedulePlugin(Star):
         await repo.register_bot(bot_id, platform, now)
         await repo.touch_session(umo, bot_id, kind, group_id, now)
         state = await self._runtime(bot_id).reconcile(bot_id, now)
-        if kind == "private" and state == PresenceState.PRE_AWAY:
+        if kind in {"private", "group"} and state == PresenceState.PRE_AWAY:
             await self._runtime(bot_id).refresh_pre_away_session(bot_id, umo, now)
 
         is_offline = state in {
@@ -536,45 +536,8 @@ class TianganSchedulePlugin(Star):
         )
         if not pre_away:
             return
-        umo = str(event.unified_msg_origin)
-        if not await self._repo().claim_notice(pre_away.id, umo):
-            req.extra_user_content_parts.append(
-                TextPart(text=pre_away_continuity_prompt(pre_away)).mark_as_temp()
-            )
-            return
         req.extra_user_content_parts.append(
-            TextPart(text=pre_away_prompt(pre_away)).mark_as_temp()
-        )
-        event.set_extra(
-            "tiangan_pre_away_notice",
-            {"event_id": pre_away.id, "umo": umo},
-        )
-
-    @filter.on_llm_response()
-    async def on_llm_response(
-        self, event: AstrMessageEvent, resp: LLMResponse
-    ) -> None:
-        marker = event.get_extra("tiangan_pre_away_notice")
-        if not marker or str(getattr(resp, "completion_text", "") or "").strip():
-            return
-        await self._repo().release_notice(marker["event_id"], marker["umo"])
-
-    @filter.after_message_sent(priority=1)
-    async def after_message_sent(self, event: AstrMessageEvent, *_args, **_kwargs) -> None:
-        if self.repository is None:
-            return
-        marker = event.get_extra("tiangan_pre_away_notice")
-        if not marker:
-            return
-        text = ""
-        result = event.get_result()
-        if result:
-            try:
-                text = str(result.get_plain_text() or "").strip()
-            except Exception:  # noqa: BLE001 - 兼容不同结果组件实现
-                text = ""
-        await self._repo().mark_notice_sent(
-            marker["event_id"], marker["umo"], text, self._now(str(event.get_self_id()))
+            TextPart(text=pre_away_continuity_prompt(pre_away)).mark_as_temp()
         )
 
     async def _send_text(self, umo: str, text: str) -> None:

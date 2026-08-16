@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from astrbot_plugin_tiangan_schedule.llm_service import normalize_notice
 from astrbot_plugin_tiangan_schedule.models import (
     MailboxMessage,
     OfflineEvent,
@@ -10,8 +11,9 @@ from astrbot_plugin_tiangan_schedule.models import (
 from astrbot_plugin_tiangan_schedule.prompts import (
     group_return_prompt,
     pre_away_continuity_prompt,
-    pre_away_prompt,
     private_return_prompt,
+    return_notice_prompt,
+    standalone_pre_away_prompt,
 )
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -49,12 +51,24 @@ def fixtures():
     return event, messages
 
 
-def test_preaway_is_request_local_instruction():
+def test_preaway_is_a_separate_short_message_for_group_or_private():
     event, _ = fixtures()
-    prompt = pre_away_prompt(event)
-    assert "只作用于本次回复" in prompt
-    assert "甜品店" in prompt
-    assert "不得取消" in prompt
+    private_prompt = standalone_pre_away_prompt(event, "private")
+    group_prompt = standalone_pre_away_prompt(event, "group")
+    assert "当前私聊" in private_prompt
+    assert "当前群聊" in group_prompt
+    assert "单独发送" in private_prompt
+    assert "不要回应聊天中的其他问题" in private_prompt
+    assert "最多 30 个字符" in group_prompt
+    assert "甜品店" in group_prompt
+
+
+def test_short_notice_is_one_line_and_hard_limited_to_30_chars():
+    raw = "第一行\n" + "很长" * 30
+    notice = normalize_notice(raw, "刚回来")
+    assert "\n" not in notice
+    assert len(notice) == 30
+    assert normalize_notice("", "醒了") == "醒了"
 
 
 def test_sleep_continuity_prompt_prevents_contradicting_the_schedule():
@@ -71,10 +85,20 @@ def test_sleep_continuity_prompt_prevents_contradicting_the_schedule():
         "睡着了",
     )
     prompt = pre_away_continuity_prompt(event)
-    assert "已经预告、但尚未正式离线" in prompt
+    assert "即将按计划离线" in prompt
     assert "不得承诺取消睡眠" in prompt
-    assert "不必主动重复完整预告" in prompt
+    assert "另一条独立消息发送" in prompt
+    assert "不得在开头或结尾拼接预告" in prompt
     assert "只作用于本次回复" in prompt
+
+
+def test_return_notice_is_separate_and_short_by_instruction():
+    event, _ = fixtures()
+    prompt = return_notice_prompt(event)
+    assert "单独发送" in prompt
+    assert "最多 30 个字符" in prompt
+    assert "不要回应对方离线期间留下的消息" in prompt
+    assert "刚回来" in prompt
 
 
 def test_sleep_return_prompt_uses_configured_night_instruction():
@@ -143,3 +167,5 @@ def test_private_prompt_has_one_request_length_exemption():
     assert "临时解除" in prompt
     assert "仅适用于当前回复" in prompt
     assert "简短内容应简短回应" in prompt
+    assert "代码会另发" in prompt
+    assert "不得在开头或结尾拼接" in prompt

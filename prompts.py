@@ -5,22 +5,27 @@ from collections import defaultdict
 from .models import MailboxMessage, OfflineEvent
 
 
-def pre_away_prompt(event: OfflineEvent) -> str:
-    return f"""<tiangan_pre_away>
-你{event.pre_away_fact}。
+def standalone_pre_away_prompt(event: OfflineEvent, message_kind: str) -> str:
+    scene = "当前群聊" if message_kind == "group" else "当前私聊"
+    return f"""你要向{scene}单独发送一条离开预告。代码确定的安排：你{event.pre_away_fact}。
 这是代码已经确定的近期安排，不得取消、否认、改写或承诺届时继续在线。
-结合当前私聊内容，以角色自己的口吻自然、简短地提醒对方。
-只需一句，不要提系统、插件、状态机、监测器或准确倒计时。
-不得虚构未提供的行程。这项要求只作用于本次回复。
-</tiangan_pre_away>"""
+只输出预告正文，不要回应聊天中的其他问题，不要添加开场白、解释或后续聊天内容。
+必须是一行、最多 30 个字符，以角色自己的口吻简单交代要去做什么或可能不看手机。
+不要提系统、插件、监测器、状态机或准确倒计时，不要虚构其他去向。"""
 
 
-def standalone_pre_away_prompt(event: OfflineEvent) -> str:
-    return f"""你正在和对方私聊。{event.pre_away_fact}。
-这是代码已经确定的近期安排，不得取消、否认、改写或承诺届时继续在线。
-请结合最近的私聊内容，以角色自己的口吻自然提醒对方。
-只输出一句简短正文。不要提系统、插件、监测器、状态机或准确倒计时，
-不要虚构其他去向，也不要解释你正在执行任务。"""
+def return_notice_prompt(event: OfflineEvent) -> str:
+    if event.event_type.value == "night_sleep":
+        fact = "你刚结束完整的夜间睡眠"
+        example = "例如：醒了。"
+    else:
+        fact = f"你刚结束这次暂时离开。此前代码确定的安排：你{event.pre_away_fact}"
+        example = "例如：刚才去看书了，刚回来。"
+    return f"""请生成一条单独发送的回归通知。{fact}。
+只输出通知正文，不要回应对方离线期间留下的消息，不要添加其他聊天内容。
+必须是一行、最多 30 个字符，以角色自己的口吻简单交代已经回来或醒来。
+{example} 示例仅用于说明信息量，不得照抄与实际安排不符的内容。
+不要提系统、插件、信箱、状态机或准确时间，不要虚构经历。"""
 
 
 def pre_away_continuity_prompt(event: OfflineEvent) -> str:
@@ -31,13 +36,15 @@ def pre_away_continuity_prompt(event: OfflineEvent) -> str:
         else "这次安排是暂时离开。不得承诺取消行程、不再离开，或届时继续在线。"
     )
     return f"""<tiangan_pre_away_continuity>
-当前仍处于已经预告、但尚未正式离线的时间窗口。
+当前处于即将按计划离线、但尚未正式离线的时间窗口。
 代码已经确定的近期安排：你{event.pre_away_fact}。
 这项事实不可被当前对话、人设中的挽留倾向或临时情绪取消、否认或改写。
 {event_rule}
 
 正常回应对方当前这句话，保持原有角色人设、双方关系和语气。
-不必主动重复完整预告；只有话题涉及该安排时，才自然保持前后一致。
+离开预告会由代码作为另一条独立消息发送。本次正常回复不得在开头或结尾拼接预告，
+也不要为了预告而减少、替换对当前消息的正常回应。
+只有话题涉及该安排时，才自然保持前后一致。
 可以表达舍不得、说明离开前还能短暂交流，或约定回来、醒来后继续。
 不要提代码、系统、插件、提示词、状态机、监测器或准确倒计时。
 不得虚构新的安排。这项要求只作用于本次回复。
@@ -124,6 +131,8 @@ def private_return_prompt(
 回复长度只由对方内容、复杂程度和明确任务决定。简短内容应简短回应；多段内容、
 多个问题或长文本任务应完整处理。不要重复、灌水或刻意扩写。
 这一豁免仅适用于当前回复；性格、关系、语气、措辞、认知和行为规则继续生效。
-可以自然带出回来或醒来的语义，但不要提系统、插件、状态机、信箱或抽样。
+代码会另发一条不超过 30 字的独立回归通知。本回复只负责回应对方留下的消息，
+不得在开头或结尾拼接“回来了”“醒了”“刚到”等回归播报。
+不要提系统、插件、状态机、信箱或抽样。
 只输出给对方的正文。
 </private_offline_return>"""

@@ -141,6 +141,7 @@ class FakeRuntime:
         self.state = state
         self.pre_away_event = pre_away_event
         self.adjusted = []
+        self.refreshed = []
 
     async def reconcile(self, *_args):
         return self.state
@@ -148,7 +149,8 @@ class FakeRuntime:
     async def ensure_calendar(self, *_args):
         pass
 
-    async def refresh_pre_away_session(self, *_args):
+    async def refresh_pre_away_session(self, *args):
+        self.refreshed.append(args)
         return self.pre_away_event
 
     async def adjust_future_schedule(self, bot_id, now):
@@ -463,26 +465,20 @@ def test_online_wake_is_not_intercepted():
     assert event.stopped is False
 
 
-def test_preaway_normal_private_request_gets_temporary_instruction():
+def test_preaway_normal_private_request_only_gets_continuity_instruction():
     plugin = make_plugin(PresenceState.PRE_AWAY)
     pre_away = plugin.repository.event
     plugin.runtime = FakeRuntime(PresenceState.PRE_AWAY, pre_away)
-    claimed = []
-
-    async def claim(event_id, umo):
-        claimed.append((event_id, umo))
-        return True
-
-    plugin.repository.claim_notice = claim
     event = FakeEvent(wake=True)
     event.unified_msg_origin = "aiocqhttp:FriendMessage:user-1"
     event.get_group_id = lambda: ""
     request = types.SimpleNamespace(extra_user_content_parts=[])
     asyncio.run(plugin.on_llm_request(event, request))
-    assert claimed == [(pre_away.id, event.unified_msg_origin)]
     assert len(request.extra_user_content_parts) == 1
     assert request.extra_user_content_parts[0].temporary is True
-    assert "只作用于本次回复" in request.extra_user_content_parts[0].text
+    assert "另一条独立消息发送" in request.extra_user_content_parts[0].text
+    assert "不得在开头或结尾拼接预告" in request.extra_user_content_parts[0].text
+    assert event.get_extra("tiangan_pre_away_notice") is None
 
 
 def test_offline_llm_request_has_a_final_global_blocker():
@@ -502,10 +498,6 @@ def test_preaway_followup_gets_continuity_constraint_after_notice_was_sent():
     pre_away = plugin.repository.event
     plugin.runtime = FakeRuntime(PresenceState.PRE_AWAY, pre_away)
 
-    async def already_sent(_event_id, _umo):
-        return False
-
-    plugin.repository.claim_notice = already_sent
     event = FakeEvent(wake=True)
     event.unified_msg_origin = "aiocqhttp:FriendMessage:user-1"
     event.get_group_id = lambda: ""
@@ -514,8 +506,26 @@ def test_preaway_followup_gets_continuity_constraint_after_notice_was_sent():
 
     assert len(request.extra_user_content_parts) == 1
     assert request.extra_user_content_parts[0].temporary is True
-    assert "已经预告、但尚未正式离线" in request.extra_user_content_parts[0].text
+    assert "即将按计划离线" in request.extra_user_content_parts[0].text
     assert event.get_extra("tiangan_pre_away_notice") is None
+
+
+def test_preaway_group_message_refreshes_standalone_notice_session():
+    plugin = make_plugin(PresenceState.PRE_AWAY)
+    pre_away = plugin.repository.event
+    runtime = FakeRuntime(PresenceState.PRE_AWAY, pre_away)
+    plugin.runtime = runtime
+    event = FakeEvent(wake=False)
+
+    asyncio.run(plugin.on_message(event))
+
+    assert len(runtime.refreshed) == 1
+    assert runtime.refreshed[0][:2] == (
+        "bot-1",
+        "aiocqhttp:GroupMessage:100",
+    )
+    assert event.stopped is False
+    assert len(plugin.repository.context_saved) == 1
 
 
 def test_today_schedule_only_shows_wake_and_sleep_times():

@@ -163,6 +163,32 @@ class Repository:
             ).fetchall()
             return [row[0] for row in rows]
 
+    async def active_pre_away_sessions(
+        self, bot_id: str, since: datetime
+    ) -> list[str]:
+        """Return recent private and group sessions eligible for a notice."""
+        async with self._lock:
+            rows = self._conn.execute(
+                "SELECT umo FROM sessions WHERE bot_id=? "
+                "AND message_kind IN ('private','group') AND last_seen_at>=?",
+                (bot_id, _iso(since)),
+            ).fetchall()
+            return [str(row[0]) for row in rows]
+
+    async def session_kind(self, umo: str) -> str | None:
+        async with self._lock:
+            row = self._conn.execute(
+                "SELECT message_kind FROM sessions WHERE umo=?", (umo,)
+            ).fetchone()
+            return str(row[0]) if row else None
+
+    async def session_last_seen(self, umo: str) -> datetime | None:
+        async with self._lock:
+            row = self._conn.execute(
+                "SELECT last_seen_at FROM sessions WHERE umo=?", (umo,)
+            ).fetchone()
+            return _dt(str(row[0])) if row else None
+
     async def save_schedule(self, schedule: DailySchedule, created_at: datetime) -> bool:
         async with self._lock:
             cursor = self._conn.execute(
@@ -379,6 +405,15 @@ class Repository:
             )
             self._conn.commit()
 
+    async def skip_notice(self, event_id: str, umo: str) -> None:
+        async with self._lock:
+            self._conn.execute(
+                "UPDATE pre_away_notice SET state='SKIPPED' "
+                "WHERE offline_event_id=? AND umo=? AND state='PENDING'",
+                (event_id, umo),
+            )
+            self._conn.commit()
+
     async def expire_notices(self, event_id: str) -> None:
         async with self._lock:
             self._conn.execute(
@@ -578,6 +613,15 @@ class Repository:
             )
             self._conn.commit()
             return int(cursor.lastrowid)
+
+    async def has_return_notice(self, event_id: str, umo: str) -> bool:
+        async with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM return_reply WHERE offline_event_id=? AND umo=? "
+                "AND message_kind='private_notice' LIMIT 1",
+                (event_id, umo),
+            ).fetchone()
+            return bool(row)
 
     async def due_replies(
         self, now: datetime, bot_id: str | None = None
