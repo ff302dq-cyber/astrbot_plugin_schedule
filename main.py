@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -27,14 +26,13 @@ from .repository import Repository
 from .runtime import RuntimeService
 
 PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
-SCHEDULE_LOGIC_VERSION = 2
 
 
 @register(
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "2.8",
+    "2.9",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -60,7 +58,6 @@ class TianganSchedulePlugin(Star):
             data_dir = Path(StarTools.get_data_dir()) / PLUGIN_NAME
         data_dir.mkdir(parents=True, exist_ok=True)
         self.repository = Repository(data_dir / "tiangan_schedule.sqlite3")
-        await self._sync_schedule_configuration()
         self._availability_token = register_availability_provider(
             self._provide_schedule_availability
         )
@@ -95,71 +92,6 @@ class TianganSchedulePlugin(Star):
                 self._send_quoted_reply,
             )
         return self._runtimes[bot_id]
-
-    def _schedule_fingerprint(self) -> str:
-        settings = self.settings
-        payload = {
-            "schedule_logic_version": SCHEDULE_LOGIC_VERSION,
-            "bot_name": settings.bot_name,
-            "timezone": settings.timezone,
-            "wake": [settings.wake_start, settings.wake_end],
-            "sleep": [settings.sleep_start, settings.sleep_end],
-            "daytime": {
-                "enabled": settings.daytime_enabled,
-                "placement": settings.daytime_placement_mode,
-                "total": [settings.total_minutes_min, settings.total_minutes_max],
-                "segments": [settings.segments_min, settings.segments_max],
-                "duration": [
-                    settings.segment_minutes_min,
-                    settings.segment_minutes_max,
-                ],
-                "error": settings.daytime_reasons_error,
-                "reasons": [
-                    {
-                        "id": reason.id,
-                        "fact": reason.pre_away_fact,
-                        "monitor": list(reason.monitor_messages),
-                    }
-                    for reason in settings.daytime_reasons
-                ],
-            },
-            "night": {
-                "fact": settings.night_reason.pre_away_fact,
-                "monitor": list(settings.night_reason.monitor_messages),
-            },
-        }
-        encoded = json.dumps(
-            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
-
-    async def _sync_schedule_configuration(self) -> None:
-        repo = self._repo()
-        fingerprint = self._schedule_fingerprint()
-        if await repo.get_meta("schedule_config_fingerprint") == fingerprint:
-            return
-        succeeded = True
-        for bot_id in await repo.bot_ids():
-            try:
-                _schedule, cleared = await self._runtime(
-                    bot_id
-                ).adjust_future_schedule_and_clear(
-                    bot_id,
-                    self._now(bot_id),
-                )
-                if any(cleared):
-                    logger.info(
-                        "[角色作息] 配置变化重建日程时已清空待回复信箱 "
-                        f"bot={bot_id} messages={cleared[0]} replies={cleared[1]}"
-                    )
-            except Exception as exc:  # noqa: BLE001 - 单 Bot 失败不破坏其他实例
-                succeeded = False
-                logger.error(
-                    f"[角色作息] 配置变化后的未来日程重建失败 bot={bot_id}: {exc}",
-                    exc_info=True,
-                )
-        if succeeded:
-            await repo.set_meta("schedule_config_fingerprint", fingerprint)
 
     def _now(self, bot_id: str) -> datetime:
         return datetime.now(self._settings(bot_id).tz)
