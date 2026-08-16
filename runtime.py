@@ -71,74 +71,86 @@ class RuntimeService:
     ) -> DailySchedule:
         """Rebuild the global current/future plan without touching an active event."""
         async with self._bot_locks[bot_id]:
-            events = await self.repository.events_near(
-                bot_id, now - timedelta(days=1), now + timedelta(days=2)
-            )
-            active = next(
-                (event for event in events if event.start_at <= now < event.end_at),
-                None,
-            )
-            if active and active.event_type == OfflineEventType.NIGHT_SLEEP:
-                active_schedule = await self.repository.get_schedule(
-                    bot_id, active.schedule_date
-                )
-                legacy_misaligned_sleep = bool(
-                    active_schedule
-                    and (
-                        active_schedule.sleep_at <= active_schedule.wake_at
-                        or active.start_at != active_schedule.sleep_at
-                    )
-                )
-                if legacy_misaligned_sleep:
-                    logger.warning(
-                        "[角色作息] 结束旧版日期归属错误的睡眠事件 "
-                        f"bot={bot_id} event={active.id}"
-                    )
-                    await self.repository.finish_event_early(active.id, now)
-                    corrected_id = active.id
-                    active = next(
-                        (
-                            event
-                            for event in events
-                            if event.id != corrected_id
-                            and event.start_at <= now < event.end_at
-                        ),
-                        None,
-                    )
-            safe_start = active.end_at if active else now
-            today = now.date()
-            tomorrow = today + timedelta(days=1)
-            await self.repository.clear_future_plans(
-                bot_id,
-                now,
-                today.isoformat(),
-                tomorrow.isoformat(),
-            )
+            return await self._adjust_future_schedule_locked(bot_id, now)
 
-            rebuilt: list[DailySchedule] = []
-            for day in (today, tomorrow):
-                generated = self.generator.generate_day(bot_id, day)
-                schedule = DailySchedule(
-                    bot_id=generated.bot_id,
-                    schedule_date=generated.schedule_date,
-                    timezone=generated.timezone,
-                    wake_at=generated.wake_at,
-                    sleep_at=generated.sleep_at,
-                    events=tuple(
+    async def adjust_future_schedule_and_clear(
+        self, bot_id: str, now: datetime
+    ) -> tuple[DailySchedule, tuple[int, int]]:
+        """Atomically rebuild the plan and discard every unsent return item."""
+        async with self._bot_locks[bot_id]:
+            schedule = await self._adjust_future_schedule_locked(bot_id, now)
+            counts = await self._clear_pending_returns_locked(bot_id, now)
+            return schedule, counts
+
+    async def _adjust_future_schedule_locked(
+        self, bot_id: str, now: datetime
+    ) -> DailySchedule:
+        events = await self.repository.events_near(
+            bot_id, now - timedelta(days=1), now + timedelta(days=2)
+        )
+        active = next(
+            (event for event in events if event.start_at <= now < event.end_at),
+            None,
+        )
+        if active and active.event_type == OfflineEventType.NIGHT_SLEEP:
+            active_schedule = await self.repository.get_schedule(
+                bot_id, active.schedule_date
+            )
+            legacy_misaligned_sleep = bool(
+                active_schedule
+                and (
+                    active_schedule.sleep_at <= active_schedule.wake_at
+                    or active.start_at != active_schedule.sleep_at
+                )
+            )
+            if legacy_misaligned_sleep:
+                logger.warning(
+                    "[角色作息] 结束旧版日期归属错误的睡眠事件 "
+                    f"bot={bot_id} event={active.id}"
+                )
+                await self.repository.finish_event_early(active.id, now)
+                corrected_id = active.id
+                active = next(
+                    (
                         event
-                        for event in generated.events
-                        if event.start_at >= safe_start
+                        for event in events
+                        if event.id != corrected_id
+                        and event.start_at <= now < event.end_at
                     ),
+                    None,
                 )
-                await self.repository.save_schedule(schedule, now)
-                rebuilt.append(schedule)
+        safe_start = active.end_at if active else now
+        today = now.date()
+        tomorrow = today + timedelta(days=1)
+        await self.repository.clear_future_plans(
+            bot_id,
+            now,
+            today.isoformat(),
+            tomorrow.isoformat(),
+        )
 
-            sleep = self.generator.make_sleep_event(
-                rebuilt[0], rebuilt[1].wake_at
+        rebuilt: list[DailySchedule] = []
+        for day in (today, tomorrow):
+            generated = self.generator.generate_day(bot_id, day)
+            schedule = DailySchedule(
+                bot_id=generated.bot_id,
+                schedule_date=generated.schedule_date,
+                timezone=generated.timezone,
+                wake_at=generated.wake_at,
+                sleep_at=generated.sleep_at,
+                events=tuple(
+                    event
+                    for event in generated.events
+                    if event.start_at >= safe_start
+                ),
             )
-            if sleep.start_at >= safe_start:
-                await self.repository.add_event(sleep)
-            return rebuilt[0]
+            await self.repository.save_schedule(schedule, now)
+            rebuilt.append(schedule)
+
+        sleep = self.generator.make_sleep_event(rebuilt[0], rebuilt[1].wake_at)
+        if sleep.start_at >= safe_start:
+            await self.repository.add_event(sleep)
+        return rebuilt[0]
 
     async def reconcile(self, bot_id: str, now: datetime) -> PresenceState:
         async with self._bot_locks[bot_id]:
@@ -270,6 +282,28 @@ class RuntimeService:
         task = asyncio.create_task(self._process_return(event_id))
         self._return_tasks[event_id] = task
         task.add_done_callback(lambda _task, key=event_id: self._return_tasks.pop(key, None))
+
+    async def clear_pending_returns(
+        self, bot_id: str, now: datetime
+    ) -> tuple[int, int]:
+        """Cancel generation and atomically skip every unsent return item."""
+        async with self._bot_locks[bot_id]:
+            return await self._clear_pending_returns_locked(bot_id, now)
+
+    async def _clear_pending_returns_locked(
+        self, bot_id: str, now: datetime
+    ) -> tuple[int, int]:
+        tasks = list(self._return_tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        counts = await self.repository.clear_pending_returns(bot_id)
+        runtime = await self.repository.get_runtime(bot_id)
+        if runtime and runtime.state == PresenceState.RETURNING:
+            await self.repository.set_runtime(bot_id, PresenceState.ONLINE, None, now)
+        return counts
 
     async def _process_return(self, event_id: str) -> None:
         event = await self.repository.get_event(event_id)
@@ -405,30 +439,33 @@ class RuntimeService:
         return min(delay, self.settings.max_delay)
 
     async def process_due_replies(self, now: datetime) -> None:
-        for reply in await self.repository.due_replies(now, self.bot_id):
-            try:
-                if reply.message_kind == "group":
-                    await self.send_reply(
-                        reply.umo,
-                        reply.quote_message_id,
-                        reply.sender_id,
-                        reply.generated_text,
-                    )
-                elif reply.message_kind == "private":
-                    await self.send_text(reply.umo, reply.generated_text)
-                    messages = await self.repository.mailbox_by_message_ids(
-                        reply.offline_event_id, reply.source_message_ids
-                    )
-                    await self.llm.record_private_return(
-                        reply.umo, messages, reply.generated_text
-                    )
-                else:
-                    await self.send_text(reply.umo, reply.generated_text)
-                await self.repository.mark_reply_sent(reply.id, now)
-                await self._finish_if_idle(reply.offline_event_id, now)
-            except Exception as exc:  # noqa: BLE001 - 单条失败不阻断后续队列
-                logger.error(f"[角色作息] 回归回复发送失败：{exc}", exc_info=True)
-                await self.repository.mark_reply_failed(reply.id, str(exc))
+        # Serialize sending with the admin clear command.  Once clearing returns,
+        # no reply fetched before the clear can still escape from a stale list.
+        async with self._bot_locks[self.bot_id]:
+            for reply in await self.repository.due_replies(now, self.bot_id):
+                try:
+                    if reply.message_kind == "group":
+                        await self.send_reply(
+                            reply.umo,
+                            reply.quote_message_id,
+                            reply.sender_id,
+                            reply.generated_text,
+                        )
+                    elif reply.message_kind == "private":
+                        await self.send_text(reply.umo, reply.generated_text)
+                        messages = await self.repository.mailbox_by_message_ids(
+                            reply.offline_event_id, reply.source_message_ids
+                        )
+                        await self.llm.record_private_return(
+                            reply.umo, messages, reply.generated_text
+                        )
+                    else:
+                        await self.send_text(reply.umo, reply.generated_text)
+                    await self.repository.mark_reply_sent(reply.id, now)
+                    await self._finish_if_idle(reply.offline_event_id, now)
+                except Exception as exc:  # noqa: BLE001 - 单条失败不阻断后续队列
+                    logger.error(f"[角色作息] 回归回复发送失败：{exc}", exc_info=True)
+                    await self.repository.mark_reply_failed(reply.id, str(exc))
 
     async def _finish_if_idle(self, event_id: str, now: datetime) -> None:
         if await self.repository.event_has_work(event_id):

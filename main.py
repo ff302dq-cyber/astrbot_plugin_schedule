@@ -34,7 +34,7 @@ SCHEDULE_LOGIC_VERSION = 2
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "2.5",
+    "2.8",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -141,9 +141,17 @@ class TianganSchedulePlugin(Star):
         succeeded = True
         for bot_id in await repo.bot_ids():
             try:
-                await self._runtime(bot_id).adjust_future_schedule(
-                    bot_id, self._now(bot_id)
+                _schedule, cleared = await self._runtime(
+                    bot_id
+                ).adjust_future_schedule_and_clear(
+                    bot_id,
+                    self._now(bot_id),
                 )
+                if any(cleared):
+                    logger.info(
+                        "[角色作息] 配置变化重建日程时已清空待回复信箱 "
+                        f"bot={bot_id} messages={cleared[0]} replies={cleared[1]}"
+                    )
             except Exception as exc:  # noqa: BLE001 - 单 Bot 失败不破坏其他实例
                 succeeded = False
                 logger.error(
@@ -382,7 +390,12 @@ class TianganSchedulePlugin(Star):
         elif not self._astrbot_wake_prefix_was_used(event):
             return False
         text = " ".join(str(getattr(event, "message_str", "") or "").strip().split())
-        commands = ("调整作息", *self._settings(bot_id).offline_allowed_commands)
+        commands = (
+            "调整作息",
+            "清空信箱",
+            "详细作息",
+            *self._settings(bot_id).offline_allowed_commands,
+        )
         for command in commands:
             if text == command or text.startswith(f"{command} "):
                 return True
@@ -599,10 +612,73 @@ class TianganSchedulePlugin(Star):
 
         bot_id = str(event.get_self_id() or "")
         now = self._now(bot_id)
-        schedule = await self._runtime(bot_id).adjust_future_schedule(bot_id, now)
+        schedule, cleared = await self._runtime(
+            bot_id
+        ).adjust_future_schedule_and_clear(bot_id, now)
         lines = ["作息表已经重新调整好了。"]
         lines.extend(self._schedule_lines(schedule, now, include_away=True))
+        if any(cleared):
+            lines.append(
+                f"待回复信箱已清空：取消消息 {cleared[0]} 条、"
+                f"待发送回复 {cleared[1]} 条。"
+            )
+        else:
+            lines.append("待回复信箱已清空（当前没有待回复消息）。")
         yield event.plain_result("\n".join(lines))
+
+    @filter.command("清空信箱")
+    async def clear_mailbox(self, event: AstrMessageEvent):
+        try:
+            is_admin = bool(event.is_admin())
+        except Exception:  # noqa: BLE001 - 兼容不同平台事件实现
+            is_admin = False
+        if not is_admin:
+            yield event.plain_result("只有亲妈才能清空我的信箱……")
+            return
+
+        bot_id = str(event.get_self_id() or "")
+        message_count, reply_count = await self._runtime(
+            bot_id
+        ).clear_pending_returns(bot_id, self._now(bot_id))
+        if message_count == 0 and reply_count == 0:
+            yield event.plain_result("信箱里没有待回复消息。")
+            return
+        yield event.plain_result(
+            f"信箱已经清空：取消待处理消息 {message_count} 条、"
+            f"待发送回复 {reply_count} 条。"
+        )
+
+    @filter.command("详细作息")
+    async def toggle_detailed_schedule(self, event: AstrMessageEvent):
+        try:
+            is_admin = bool(event.is_admin())
+        except Exception:  # noqa: BLE001 - 兼容不同平台事件实现
+            is_admin = False
+        if not is_admin:
+            yield event.plain_result("只有亲妈才能切换详细作息……")
+            return
+
+        enabled = not self.settings.show_precise_schedule
+        daytime_raw = self.config.get("daytime_away", {})
+        daytime = dict(daytime_raw) if isinstance(daytime_raw, dict) else {}
+        daytime["show_precise_schedule"] = enabled
+        self.config["daytime_away"] = daytime
+        self.settings = load_settings(self.config)
+        save_config = getattr(self.config, "save_config", None)
+        if callable(save_config):
+            try:
+                save_config()
+            except Exception as exc:  # noqa: BLE001 - 内存开关仍可立即生效
+                logger.warning(f"[角色作息] 保存详细作息开关失败：{exc}")
+
+        if enabled:
+            yield event.plain_result(
+                "详细作息已开启；/今日作息将显示每段离开的开始和结束时间。"
+            )
+        else:
+            yield event.plain_result(
+                "详细作息已关闭；/今日作息将只显示起床和睡觉时间。"
+            )
 
     @staticmethod
     def _schedule_lines(
@@ -637,14 +713,14 @@ class TianganSchedulePlugin(Star):
             return
         lines = self._schedule_lines(schedule, now, include_away=False)
         if self.settings.show_precise_schedule:
-            starts = [
-                item.start_at.strftime("%H:%M")
+            periods = [
+                f"{item.start_at:%H:%M}～{item.end_at:%H:%M}"
                 for item in sorted(schedule.events, key=lambda event: event.start_at)
                 if item.event_type == OfflineEventType.DAYTIME_AWAY
                 and item.end_at > now
             ]
-            if starts:
-                lines.extend(["", "可能暂时离开：" + "、".join(starts)])
+            if periods:
+                lines.extend(["", "可能暂时离开：", *(f"- {item}" for item in periods)])
         if self.settings.daytime_reasons_error:
             lines.extend(
                 [

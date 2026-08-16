@@ -718,6 +718,41 @@ class Repository:
             ).fetchone()
             return bool(mailbox or replies)
 
+    async def clear_pending_returns(self, bot_id: str) -> tuple[int, int]:
+        """Skip all unsent mailbox work for one bot and preserve history."""
+        async with self._lock:
+            message_row = self._conn.execute(
+                "SELECT COUNT(*) FROM mailbox_message m "
+                "JOIN offline_event e ON e.id=m.offline_event_id "
+                "WHERE e.bot_id=? AND m.selection_state IN "
+                "('PENDING','SELECTED','GENERATED')",
+                (bot_id,),
+            ).fetchone()
+            reply_row = self._conn.execute(
+                "SELECT COUNT(*) FROM return_reply r "
+                "JOIN offline_event e ON e.id=r.offline_event_id "
+                "WHERE e.bot_id=? AND r.send_state='GENERATED'",
+                (bot_id,),
+            ).fetchone()
+            message_count = int(message_row[0]) if message_row else 0
+            reply_count = int(reply_row[0]) if reply_row else 0
+
+            self._conn.execute(
+                "UPDATE mailbox_message SET selection_state='SKIPPED' "
+                "WHERE selection_state IN ('PENDING','SELECTED','GENERATED') "
+                "AND offline_event_id IN "
+                "(SELECT id FROM offline_event WHERE bot_id=?)",
+                (bot_id,),
+            )
+            self._conn.execute(
+                "UPDATE return_reply SET send_state='SKIPPED',error='cleared by admin' "
+                "WHERE send_state='GENERATED' AND offline_event_id IN "
+                "(SELECT id FROM offline_event WHERE bot_id=?)",
+                (bot_id,),
+            )
+            self._conn.commit()
+            return message_count, reply_count
+
     async def events_pending_return_generation(
         self, bot_id: str, now: datetime
     ) -> list[str]:
