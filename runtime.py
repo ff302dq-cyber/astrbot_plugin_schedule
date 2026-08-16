@@ -10,7 +10,13 @@ from astrbot.api import logger
 
 from .config import PluginSettings
 from .llm_service import LLMService, group_by_sender
-from .models import MailboxMessage, OfflineEvent, OfflineEventType, PresenceState
+from .models import (
+    DailySchedule,
+    MailboxMessage,
+    OfflineEvent,
+    OfflineEventType,
+    PresenceState,
+)
 from .repository import Repository
 from .schedule import ScheduleGenerator, sample_group_messages
 
@@ -59,6 +65,53 @@ class RuntimeService:
                 await self.repository.add_event(
                     self.generator.make_sleep_event(current, following.wake_at)
                 )
+
+    async def adjust_future_schedule(
+        self, bot_id: str, now: datetime
+    ) -> DailySchedule:
+        """Rebuild the global current/future plan without touching an active event."""
+        async with self._bot_locks[bot_id]:
+            events = await self.repository.events_near(
+                bot_id, now - timedelta(days=1), now + timedelta(days=2)
+            )
+            active = next(
+                (event for event in events if event.start_at <= now < event.end_at),
+                None,
+            )
+            safe_start = active.end_at if active else now
+            today = now.date()
+            tomorrow = today + timedelta(days=1)
+            await self.repository.clear_future_plans(
+                bot_id,
+                now,
+                today.isoformat(),
+                tomorrow.isoformat(),
+            )
+
+            rebuilt: list[DailySchedule] = []
+            for day in (today, tomorrow):
+                generated = self.generator.generate_day(bot_id, day)
+                schedule = DailySchedule(
+                    bot_id=generated.bot_id,
+                    schedule_date=generated.schedule_date,
+                    timezone=generated.timezone,
+                    wake_at=generated.wake_at,
+                    sleep_at=generated.sleep_at,
+                    events=tuple(
+                        event
+                        for event in generated.events
+                        if event.start_at >= safe_start
+                    ),
+                )
+                await self.repository.save_schedule(schedule, now)
+                rebuilt.append(schedule)
+
+            sleep = self.generator.make_sleep_event(
+                rebuilt[0], rebuilt[1].wake_at
+            )
+            if sleep.start_at >= safe_start:
+                await self.repository.add_event(sleep)
+            return rebuilt[0]
 
     async def reconcile(self, bot_id: str, now: datetime) -> PresenceState:
         async with self._bot_locks[bot_id]:

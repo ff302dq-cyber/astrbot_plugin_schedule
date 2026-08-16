@@ -8,7 +8,7 @@ from typing import Any
 from astrbot.api import logger
 
 from .config import PluginSettings
-from .models import MailboxMessage, OfflineEvent
+from .models import MailboxMessage, OfflineEvent, OfflineEventType
 from .prompts import (
     group_return_prompt,
     private_return_prompt,
@@ -78,7 +78,15 @@ class LLMService:
     async def private_return(
         self, event: OfflineEvent, umo: str, messages: list[MailboxMessage]
     ) -> str:
-        return await self._generate(umo, private_return_prompt(event, messages))
+        instruction = (
+            self.settings.night_return_instruction
+            if event.event_type == OfflineEventType.NIGHT_SLEEP
+            else ""
+        )
+        return await self._generate(
+            umo,
+            private_return_prompt(event, messages, instruction),
+        )
 
     async def group_return(
         self, event: OfflineEvent, umo: str, messages: list[MailboxMessage]
@@ -86,7 +94,14 @@ class LLMService:
         context = await self.repository.recent_group_context(umo)
         raw = await self._generate(
             umo,
-            group_return_prompt(event, messages, context),
+            group_return_prompt(
+                event,
+                messages,
+                context,
+                self.settings.night_return_instruction
+                if event.event_type == OfflineEventType.NIGHT_SLEEP
+                else "",
+            ),
             include_history=True,
         )
         parsed = self._parse_group_json(raw)

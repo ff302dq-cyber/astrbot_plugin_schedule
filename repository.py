@@ -44,6 +44,9 @@ class Repository:
             CREATE TABLE IF NOT EXISTS bots (
                 bot_id TEXT PRIMARY KEY, platform TEXT NOT NULL, last_seen_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS plugin_meta (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS sessions (
                 umo TEXT PRIMARY KEY, bot_id TEXT NOT NULL, message_kind TEXT NOT NULL,
                 group_id TEXT NOT NULL DEFAULT '', last_seen_at TEXT NOT NULL
@@ -122,6 +125,22 @@ class Repository:
         async with self._lock:
             return [row[0] for row in self._conn.execute("SELECT bot_id FROM bots")]
 
+    async def get_meta(self, key: str) -> str | None:
+        async with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM plugin_meta WHERE key=?", (key,)
+            ).fetchone()
+            return str(row[0]) if row else None
+
+    async def set_meta(self, key: str, value: str) -> None:
+        async with self._lock:
+            self._conn.execute(
+                "INSERT INTO plugin_meta(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+            self._conn.commit()
+
     async def touch_session(
         self, umo: str, bot_id: str, message_kind: str, group_id: str, now: datetime
     ) -> None:
@@ -162,6 +181,41 @@ class Repository:
                 self._insert_events(schedule.events)
             self._conn.commit()
             return bool(cursor.rowcount)
+
+    async def clear_future_plans(
+        self,
+        bot_id: str,
+        now: datetime,
+        first_date: str,
+        last_date: str,
+    ) -> int:
+        """Delete only not-yet-started plans; active and historical events survive."""
+        async with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM offline_event WHERE bot_id=? AND planned_start_at>? "
+                "AND schedule_date BETWEEN ? AND ?",
+                (bot_id, _iso(now), first_date, last_date),
+            ).fetchall()
+            event_ids = [str(row[0]) for row in rows]
+            if event_ids:
+                self._conn.executemany(
+                    "DELETE FROM pre_away_notice WHERE offline_event_id=?",
+                    [(event_id,) for event_id in event_ids],
+                )
+                self._conn.executemany(
+                    "DELETE FROM offline_monitor_notice WHERE offline_event_id=?",
+                    [(event_id,) for event_id in event_ids],
+                )
+                self._conn.executemany(
+                    "DELETE FROM offline_event WHERE id=?",
+                    [(event_id,) for event_id in event_ids],
+                )
+            self._conn.execute(
+                "DELETE FROM daily_schedule WHERE bot_id=? AND schedule_date BETWEEN ? AND ?",
+                (bot_id, first_date, last_date),
+            )
+            self._conn.commit()
+            return len(event_ids)
 
     def _insert_events(self, events: Iterable[OfflineEvent]) -> None:
         self._conn.executemany(

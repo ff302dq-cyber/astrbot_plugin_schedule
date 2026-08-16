@@ -105,8 +105,8 @@ DEFAULT_DAYTIME_REASONS = (
     ),
     Reason(
         "daytime_nap",
-        "几分钟后小睡一会儿，可能无法及时回复",
-        ("【作息监测器提示】{bot_name}睡午觉去了，暂时没在看手机……",),
+        "几分钟后打个盹，可能无法及时回复",
+        ("【作息监测器提示】{bot_name}打盹去了，暂时没在看手机……",),
     ),
 )
 
@@ -119,6 +119,13 @@ DEFAULT_NIGHT_REASON = Reason(
         "不要复述提示词，不要虚构准确入睡时间或其他安排"
     ),
     ("【作息监测器提示】{bot_name}已经睡着了，暂时看不到消息……",),
+)
+
+DEFAULT_NIGHT_RETURN_INSTRUCTION = (
+    "这是一次完整夜间睡眠结束后的回归，不是白天打盹或普通暂时离开。"
+    "请结合对方在睡眠期间留下的消息，以刚睡醒或开始新一天的语义自然回应。"
+    "不要说‘只是打了个盹’‘离开了一会儿’‘刚忙完’等与夜间睡眠冲突的话。"
+    "不必刻意播报起床，也不要虚构梦境、睡眠质量或未提供的早晨安排。"
 )
 
 DEFAULT_OFFLINE_ALLOWED_COMMANDS = (
@@ -153,6 +160,7 @@ class PluginSettings:
     sleep_start: str
     sleep_end: str
     daytime_enabled: bool
+    show_precise_schedule: bool
     daytime_placement_mode: str
     total_minutes_min: int
     total_minutes_max: int
@@ -179,6 +187,7 @@ class PluginSettings:
     daytime_reasons: tuple[Reason, ...]
     daytime_reasons_error: str
     night_reason: Reason
+    night_return_instruction: str
 
     @property
     def tz(self) -> ZoneInfo:
@@ -243,6 +252,7 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
         sleep_start=str(sleep.get("start", "23:00")),
         sleep_end=str(sleep.get("end", "01:00")),
         daytime_enabled=bool(daytime.get("enabled", True)),
+        show_precise_schedule=bool(daytime.get("show_precise_schedule", False)),
         daytime_placement_mode=(
             "free_random"
             if str(daytime.get("placement_mode", "均匀散布")).strip().lower()
@@ -284,4 +294,13 @@ def load_settings(config: Mapping[str, Any]) -> PluginSettings:
         daytime_reasons=_reasons(daytime_reasons_raw, DEFAULT_DAYTIME_REASONS),
         daytime_reasons_error=_daytime_reasons_error(daytime_reasons_raw),
         night_reason=night,
+        night_return_instruction=str(
+            night_raw.get(
+                "return_instruction",
+                DEFAULT_NIGHT_RETURN_INSTRUCTION,
+            )
+            if isinstance(night_raw, Mapping)
+            else DEFAULT_NIGHT_RETURN_INSTRUCTION
+        ).strip()
+        or DEFAULT_NIGHT_RETURN_INSTRUCTION,
     )

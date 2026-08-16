@@ -120,7 +120,7 @@ class ScheduleGenerator:
             day, self.settings.sleep_start, self.settings.sleep_end, tz, self.rng
         )
         events: list[OfflineEvent] = []
-        if self.settings.daytime_enabled:
+        if self.settings.daytime_enabled and not self.settings.daytime_reasons_error:
             events.extend(self._daytime_events(bot_id, day, wake_at, sleep_at))
         return DailySchedule(
             bot_id=bot_id,

@@ -29,7 +29,7 @@
       "type": "string"
     },
     "obvious_hint": true,
-    "hint": "每项只填写指令名称，不要填写 /、+ 等唤醒前缀。私聊若已关闭“需要唤醒词”，可直接发送“查看核心记忆”；若私聊需要唤醒词则跟随 AstrBot 设置。群聊仍使用当前 AstrBot 唤醒词，例如自动放行 /查看核心记忆。支持带参数的指令。",
+    "hint": "每项只填写指令名称，不要填写 /、+ 等唤醒前缀。私聊若已关闭“需要唤醒词”，可直接发送“查看核心记忆”；若私聊需要唤醒词则跟随 AstrBot 设置。群聊仍使用当前 AstrBot 唤醒词，例如自动放行 /查看核心记忆。支持带参数的指令。管理员命令“调整作息”始终放行到权限检查，无需加入此列表。",
     "default": ["查看核心记忆", "记忆总结", "查看总结进度"]
   },
   "wake_window": {
@@ -55,6 +55,13 @@
     "type": "object",
     "items": {
       "enabled": {"description": "启用", "type": "bool", "default": true},
+      "show_precise_schedule": {
+        "description": "在 /今日作息 中显示精确时间表",
+        "type": "bool",
+        "default": false,
+        "obvious_hint": true,
+        "hint": "关闭时只显示起床和睡觉时间；打开后额外显示每段白天暂时离开的开始时间，精确到分钟，不显示结束时间和离开原因。"
+      },
       "placement_mode": {
         "description": "白天离开时段放置算法",
         "type": "string",
@@ -115,7 +122,7 @@
         "description": "白天离开原因 JSON",
         "hint": "这是普通多行文本框，不会加载代码编辑器。内容必须是 JSON 数组；每个 {...} 是一条原因，可复制或删除整段，数量不设上限。",
         "type": "text",
-        "default": "[\n  {\n    \"id\": \"dessert_shop\",\n    \"pre_away_fact\": \"几分钟后去甜品店，可能无法及时回复\",\n    \"monitor_messages\": [\n      \"【作息监测器提示】{bot_name}去甜品店了，不在手机跟前……\"\n    ]\n  },\n  {\n    \"id\": \"daytime_nap\",\n    \"pre_away_fact\": \"几分钟后小睡一会儿，可能无法及时回复\",\n    \"monitor_messages\": [\n      \"【作息监测器提示】{bot_name}睡午觉去了，暂时没在看手机……\"\n    ]\n  }\n]"
+    "default": "[\n  {\n    \"id\": \"dessert_shop\",\n    \"pre_away_fact\": \"几分钟后去甜品店，可能无法及时回复\",\n    \"monitor_messages\": [\n      \"【作息监测器提示】{bot_name}去甜品店了，不在手机跟前……\"\n    ]\n  },\n  {\n    \"id\": \"daytime_nap\",\n    \"pre_away_fact\": \"几分钟后打个盹，可能无法及时回复\",\n    \"monitor_messages\": [\n      \"【作息监测器提示】{bot_name}打盹去了，暂时没在看手机……\"\n    ]\n  }\n]"
       },
       "night_sleep": {
         "description": "夜间睡眠",
@@ -133,6 +140,13 @@
             "type": "text",
             "hint": "每行一条；每天睡眠开始时随机选一条并固定。",
             "default": "【作息监测器提示】{bot_name}已经睡着了，暂时看不到消息……"
+          },
+          "return_instruction": {
+            "description": "夜间睡眠结束后的回归要求（交给 LLM）",
+            "type": "text",
+            "obvious_hint": true,
+            "hint": "第二天起床后，插件处理睡眠期间收到的私聊或群聊消息时，会把这段要求交给 LLM。它不会原样发送，只约束睡醒后的回归措辞；白天暂时离开不使用此项。",
+            "default": "这是一次完整夜间睡眠结束后的回归，不是白天打盹或普通暂时离开。请结合对方在睡眠期间留下的消息，以刚睡醒或开始新一天的语义自然回应。不要说‘只是打了个盹’‘离开了一会儿’‘刚忙完’等与夜间睡眠冲突的话。不必刻意播报起床，也不要虚构梦境、睡眠质量或未提供的早晨安排。"
           }
         }
       }

@@ -55,6 +55,7 @@ def group_return_prompt(
     event: OfflineEvent,
     messages: list[MailboxMessage],
     group_context: list[dict[str, str]],
+    event_return_instruction: str = "",
 ) -> str:
     grouped: dict[str, list[MailboxMessage]] = defaultdict(list)
     for message in messages:
@@ -71,8 +72,15 @@ def group_return_prompt(
             f"{_message_lines(items)}\n</message_package>"
         )
 
+    return_instruction = (
+        f"\n本次离线类型的确定要求：\n{event_return_instruction}\n"
+        if event_return_instruction
+        else ""
+    )
+
     return f"""<tiangan_group_return>
 角色刚结束一次离线，离线原因是：{event.reason_id}。
+{return_instruction}
 
 以下是最近的群聊环境背景。它只帮助理解语境，不需要逐条回应：
 <group_context>
@@ -95,9 +103,19 @@ def group_return_prompt(
 </tiangan_group_return>"""
 
 
-def private_return_prompt(event: OfflineEvent, messages: list[MailboxMessage]) -> str:
+def private_return_prompt(
+    event: OfflineEvent,
+    messages: list[MailboxMessage],
+    event_return_instruction: str = "",
+) -> str:
+    return_instruction = (
+        f"\n本次离线类型的确定要求：\n{event_return_instruction}\n"
+        if event_return_instruction
+        else ""
+    )
     return f"""<private_offline_return>
 这是一次私聊离线回归。离线原因：{event.reason_id}。
+{return_instruction}
 
 请完整阅读对方在你离开期间留下的全部消息，并在一条回复中自然回应：
 {_message_lines(messages)}

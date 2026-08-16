@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,11 @@ from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core.agent.message import TextPart
 
+from .availability import (
+    ScheduleAvailability,
+    register_availability_provider,
+    unregister_availability_provider,
+)
 from .config import PluginSettings, load_settings
 from .llm_service import LLMService
 from .models import OfflineEvent, OfflineEventType, PresenceState
@@ -27,7 +33,7 @@ PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "1.0.15",
+    "2.2",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -42,6 +48,7 @@ class TianganSchedulePlugin(Star):
         self._ticker: asyncio.Task | None = None
         self._closing = False
         self._bot_display_names: dict[str, str] = {}
+        self._availability_token: object | None = None
 
     async def initialize(self) -> None:
         try:
@@ -52,6 +59,10 @@ class TianganSchedulePlugin(Star):
             data_dir = Path(StarTools.get_data_dir()) / PLUGIN_NAME
         data_dir.mkdir(parents=True, exist_ok=True)
         self.repository = Repository(data_dir / "tiangan_schedule.sqlite3")
+        await self._sync_schedule_configuration()
+        self._availability_token = register_availability_provider(
+            self._provide_schedule_availability
+        )
         self._ticker = asyncio.create_task(self._ticker_loop())
         logger.info(
             f"[角色作息] 插件已加载，AstrBot>=4.24.0，数据库={data_dir / 'tiangan_schedule.sqlite3'}"
@@ -84,8 +95,104 @@ class TianganSchedulePlugin(Star):
             )
         return self._runtimes[bot_id]
 
+    def _schedule_fingerprint(self) -> str:
+        settings = self.settings
+        payload = {
+            "bot_name": settings.bot_name,
+            "timezone": settings.timezone,
+            "wake": [settings.wake_start, settings.wake_end],
+            "sleep": [settings.sleep_start, settings.sleep_end],
+            "daytime": {
+                "enabled": settings.daytime_enabled,
+                "placement": settings.daytime_placement_mode,
+                "total": [settings.total_minutes_min, settings.total_minutes_max],
+                "segments": [settings.segments_min, settings.segments_max],
+                "duration": [
+                    settings.segment_minutes_min,
+                    settings.segment_minutes_max,
+                ],
+                "error": settings.daytime_reasons_error,
+                "reasons": [
+                    {
+                        "id": reason.id,
+                        "fact": reason.pre_away_fact,
+                        "monitor": list(reason.monitor_messages),
+                    }
+                    for reason in settings.daytime_reasons
+                ],
+            },
+            "night": {
+                "fact": settings.night_reason.pre_away_fact,
+                "monitor": list(settings.night_reason.monitor_messages),
+            },
+        }
+        encoded = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    async def _sync_schedule_configuration(self) -> None:
+        repo = self._repo()
+        fingerprint = self._schedule_fingerprint()
+        if await repo.get_meta("schedule_config_fingerprint") == fingerprint:
+            return
+        succeeded = True
+        for bot_id in await repo.bot_ids():
+            try:
+                await self._runtime(bot_id).adjust_future_schedule(
+                    bot_id, self._now(bot_id)
+                )
+            except Exception as exc:  # noqa: BLE001 - 单 Bot 失败不破坏其他实例
+                succeeded = False
+                logger.error(
+                    f"[角色作息] 配置变化后的未来日程重建失败 bot={bot_id}: {exc}",
+                    exc_info=True,
+                )
+        if succeeded:
+            await repo.set_meta("schedule_config_fingerprint", fingerprint)
+
     def _now(self, bot_id: str) -> datetime:
         return datetime.now(self._settings(bot_id).tz)
+
+    async def _provide_schedule_availability(
+        self, bot_id: str | None
+    ) -> ScheduleAvailability | None:
+        if self.repository is None or not self.settings.enabled:
+            return None
+        resolved_bot_id = str(bot_id or "").strip()
+        if not resolved_bot_id:
+            known_bot_ids = await self._repo().bot_ids()
+            if len(known_bot_ids) != 1:
+                return None
+            resolved_bot_id = known_bot_ids[0]
+
+        now = self._now(resolved_bot_id)
+        state = await self._runtime(resolved_bot_id).reconcile(
+            resolved_bot_id, now
+        )
+        runtime = await self._repo().get_runtime(resolved_bot_id)
+        current_event = (
+            await self._repo().get_event(runtime.current_event_id)
+            if runtime and runtime.current_event_id
+            else None
+        )
+        next_online_at = (
+            current_event.end_at
+            if current_event
+            and state
+            in {
+                PresenceState.PRE_AWAY,
+                PresenceState.AWAY,
+                PresenceState.SLEEPING,
+            }
+            else None
+        )
+        return ScheduleAvailability(
+            bot_id=resolved_bot_id,
+            state=state.value,
+            can_send_proactive=state == PresenceState.ONLINE,
+            next_online_at=next_online_at,
+        )
 
     def _message_time(self, event: AstrMessageEvent, bot_id: str) -> datetime:
         timestamp = int(getattr(event.message_obj, "timestamp", 0) or 0)
@@ -273,7 +380,8 @@ class TianganSchedulePlugin(Star):
         elif not self._astrbot_wake_prefix_was_used(event):
             return False
         text = " ".join(str(getattr(event, "message_str", "") or "").strip().split())
-        for command in self._settings(bot_id).offline_allowed_commands:
+        commands = ("调整作息", *self._settings(bot_id).offline_allowed_commands)
+        for command in commands:
             if text == command or text.startswith(f"{command} "):
                 return True
         return False
@@ -498,6 +606,21 @@ class TianganSchedulePlugin(Star):
         }.get(state, "在线")
         yield event.plain_result(f"当前状态：{label}")
 
+    @filter.command("调整作息")
+    async def adjust_schedule(self, event: AstrMessageEvent):
+        try:
+            is_admin = bool(event.is_admin())
+        except Exception:  # noqa: BLE001 - 兼容不同平台事件实现
+            is_admin = False
+        if not is_admin:
+            yield event.plain_result("只有亲妈才能修改我的作息表……")
+            return
+
+        bot_id = str(event.get_self_id() or "")
+        now = self._now(bot_id)
+        await self._runtime(bot_id).adjust_future_schedule(bot_id, now)
+        yield event.plain_result("作息表已经重新调整好了。")
+
     @filter.command("今日作息")
     async def today_schedule(self, event: AstrMessageEvent):
         bot_id = str(event.get_self_id() or "")
@@ -509,9 +632,17 @@ class TianganSchedulePlugin(Star):
             return
         lines = [
             f"日期：{schedule.schedule_date}",
-            f"起床：{schedule.wake_at:%H:%M:%S}",
-            f"睡觉：{schedule.sleep_at:%Y-%m-%d %H:%M:%S}",
+            f"起床：{schedule.wake_at:%H:%M}",
+            f"睡觉：{schedule.sleep_at:%Y-%m-%d %H:%M}",
         ]
+        if self.settings.show_precise_schedule:
+            starts = [
+                item.start_at.strftime("%H:%M")
+                for item in sorted(schedule.events, key=lambda event: event.start_at)
+                if item.event_type == OfflineEventType.DAYTIME_AWAY
+            ]
+            if starts:
+                lines.extend(["", "可能暂时离开：" + "、".join(starts)])
         if self.settings.daytime_reasons_error:
             lines.extend(
                 [
@@ -525,6 +656,8 @@ class TianganSchedulePlugin(Star):
 
     async def terminate(self) -> None:
         self._closing = True
+        unregister_availability_provider(self._availability_token)
+        self._availability_token = None
         if self._ticker:
             self._ticker.cancel()
             await asyncio.gather(self._ticker, return_exceptions=True)
