@@ -34,7 +34,7 @@ SCHEDULE_LOGIC_VERSION = 2
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "2.4",
+    "2.5",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -432,7 +432,6 @@ class TianganSchedulePlugin(Star):
         is_offline = state in {
             PresenceState.AWAY,
             PresenceState.SLEEPING,
-            PresenceState.RETURNING,
         }
         if is_offline and self._is_allowed_offline_command(event, bot_id):
             event.set_extra("tiangan_offline_command_allowed", True)
@@ -474,6 +473,24 @@ class TianganSchedulePlugin(Star):
             return
         offline_event = await repo.get_event(runtime.current_event_id)
         if not offline_event:
+            return
+
+        expected_state = (
+            PresenceState.SLEEPING
+            if offline_event.event_type == OfflineEventType.NIGHT_SLEEP
+            else PresenceState.AWAY
+        )
+        if not (
+            state == expected_state
+            and offline_event.start_at <= now < offline_event.end_at
+        ):
+            logger.warning(
+                "[角色作息] 拒绝使用过期或不匹配的离线事件拦截消息 "
+                f"bot={bot_id} state={state.value} event={offline_event.id} "
+                f"event_type={offline_event.event_type.value} now={now.isoformat()} "
+                f"start={offline_event.start_at.isoformat()} "
+                f"end={offline_event.end_at.isoformat()}"
+            )
             return
 
         await repo.save_mailbox(
@@ -526,7 +543,6 @@ class TianganSchedulePlugin(Star):
         if state in {
             PresenceState.AWAY,
             PresenceState.SLEEPING,
-            PresenceState.RETURNING,
         }:
             event.should_call_llm(False)
             event.stop_event()

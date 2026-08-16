@@ -144,15 +144,35 @@ class RuntimeService:
         async with self._bot_locks[bot_id]:
             await self.ensure_calendar(bot_id, now)
             runtime = await self.repository.get_runtime(bot_id)
-            if runtime and runtime.state == PresenceState.RETURNING and runtime.current_event_id:
-                if await self.repository.event_has_work(runtime.current_event_id):
-                    self.start_return(runtime.current_event_id)
-                    return PresenceState.RETURNING
-                await self.repository.set_runtime(bot_id, PresenceState.ONLINE, None, now)
-
             events = await self.repository.events_near(
                 bot_id, now - timedelta(days=1), now + timedelta(days=1)
             )
+
+            # Preserve the existing "do not replay an event missed during a
+            # long shutdown" rule before scheduling any return generation.
+            if runtime and runtime.current_event_id and runtime.state in {
+                PresenceState.AWAY,
+                PresenceState.SLEEPING,
+            }:
+                previous = await self.repository.get_event(runtime.current_event_id)
+                if previous and previous.end_at <= now:
+                    stale_after = timedelta(
+                        seconds=max(15.0, self.settings.scheduler_interval_seconds * 4)
+                    )
+                    if (
+                        now - runtime.updated_at > stale_after
+                        and now - previous.end_at > stale_after
+                    ):
+                        await self.repository.abandon_event(previous.id)
+
+            # Return generation is background work, not a presence state.  Resume
+            # unfinished mailbox generation independently so a restart cannot
+            # make an already-awake bot appear offline until its queue drains.
+            for event_id in await self.repository.events_pending_return_generation(
+                bot_id, now
+            ):
+                self.start_return(event_id)
+
             active = next((event for event in events if event.start_at <= now < event.end_at), None)
             if active:
                 state = (
@@ -182,27 +202,6 @@ class RuntimeService:
                     )
                     await self._prepare_notices(upcoming, now)
                     return PresenceState.PRE_AWAY
-
-            if runtime and runtime.current_event_id and runtime.state in {
-                PresenceState.AWAY,
-                PresenceState.SLEEPING,
-            }:
-                previous = await self.repository.get_event(runtime.current_event_id)
-                if previous and previous.end_at <= now:
-                    stale_after = timedelta(
-                        seconds=max(15.0, self.settings.scheduler_interval_seconds * 4)
-                    )
-                    if (
-                        now - runtime.updated_at > stale_after
-                        and now - previous.end_at > stale_after
-                    ):
-                        await self.repository.abandon_event(previous.id)
-                    elif await self.repository.event_has_work(previous.id):
-                        await self.repository.set_runtime(
-                            bot_id, PresenceState.RETURNING, previous.id, now
-                        )
-                        self.start_return(previous.id)
-                        return PresenceState.RETURNING
 
             await self.repository.set_runtime(bot_id, PresenceState.ONLINE, None, now)
             return PresenceState.ONLINE
@@ -439,7 +438,18 @@ class RuntimeService:
             return
         event = await self.repository.get_event(event_id)
         if event:
-            await self.repository.set_runtime(event.bot_id, PresenceState.ONLINE, None, now)
+            # Compatibility cleanup for databases written by versions that used
+            # RETURNING as a presence state.  Never overwrite a newer active
+            # away/sleep event merely because an older return queue became idle.
+            runtime = await self.repository.get_runtime(event.bot_id)
+            if (
+                runtime
+                and runtime.state == PresenceState.RETURNING
+                and runtime.current_event_id == event_id
+            ):
+                await self.repository.set_runtime(
+                    event.bot_id, PresenceState.ONLINE, None, now
+                )
 
     async def shutdown(self) -> None:
         tasks = list(self._return_tasks.values())

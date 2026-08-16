@@ -718,6 +718,27 @@ class Repository:
             ).fetchone()
             return bool(mailbox or replies)
 
+    async def events_pending_return_generation(
+        self, bot_id: str, now: datetime
+    ) -> list[str]:
+        """Return ended events whose mailbox content still needs generation.
+
+        Generated replies are deliberately excluded: the persistent send queue
+        resumes them independently through ``due_replies``.  This query exists
+        so return generation can survive a restart without keeping presence in
+        a synthetic RETURNING/offline state.
+        """
+        async with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT e.id FROM offline_event e "
+                "JOIN mailbox_message m ON m.offline_event_id=e.id "
+                "WHERE e.bot_id=? AND e.planned_end_at<=? "
+                "AND m.selection_state IN ('PENDING','SELECTED') "
+                "ORDER BY e.planned_end_at,e.id",
+                (bot_id, _iso(now)),
+            ).fetchall()
+            return [str(row[0]) for row in rows]
+
     async def save_group_context(
         self,
         umo: str,
