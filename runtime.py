@@ -18,7 +18,7 @@ from .models import (
     PresenceState,
 )
 from .repository import Repository
-from .schedule import ScheduleGenerator, sample_group_messages
+from .schedule import ScheduleGenerator, sample_group_messages, sleep_event_id
 
 SendText = Callable[[str, str], Awaitable[None]]
 SendReply = Callable[[str, str, str, str], Awaitable[None]]
@@ -60,7 +60,7 @@ class RuntimeService:
             )
             if not current or not following:
                 continue
-            event_id = f"sleep-{bot_id}-{day.isoformat()}"
+            event_id = sleep_event_id(bot_id, day.isoformat())
             if not await self.repository.get_event(event_id):
                 await self.repository.add_event(
                     self.generator.make_sleep_event(current, following.wake_at)
@@ -78,6 +78,33 @@ class RuntimeService:
                 (event for event in events if event.start_at <= now < event.end_at),
                 None,
             )
+            if active and active.event_type == OfflineEventType.NIGHT_SLEEP:
+                active_schedule = await self.repository.get_schedule(
+                    bot_id, active.schedule_date
+                )
+                legacy_misaligned_sleep = bool(
+                    active_schedule
+                    and (
+                        active_schedule.sleep_at <= active_schedule.wake_at
+                        or active.start_at != active_schedule.sleep_at
+                    )
+                )
+                if legacy_misaligned_sleep:
+                    logger.warning(
+                        "[角色作息] 结束旧版日期归属错误的睡眠事件 "
+                        f"bot={bot_id} event={active.id}"
+                    )
+                    await self.repository.finish_event_early(active.id, now)
+                    corrected_id = active.id
+                    active = next(
+                        (
+                            event
+                            for event in events
+                            if event.id != corrected_id
+                            and event.start_at <= now < event.end_at
+                        ),
+                        None,
+                    )
             safe_start = active.end_at if active else now
             today = now.date()
             tomorrow = today + timedelta(days=1)

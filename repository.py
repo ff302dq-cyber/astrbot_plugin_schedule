@@ -270,6 +270,21 @@ class Repository:
             self._insert_events([event])
             self._conn.commit()
 
+    async def finish_event_early(self, event_id: str, now: datetime) -> None:
+        """End a malformed active event while preserving its mailbox history."""
+        async with self._lock:
+            self._conn.execute(
+                "UPDATE offline_event SET planned_end_at=?,state='CORRECTED' WHERE id=? "
+                "AND planned_start_at<=? AND planned_end_at>?",
+                (_iso(now), event_id, _iso(now), _iso(now)),
+            )
+            self._conn.execute(
+                "UPDATE pre_away_notice SET state='SKIPPED' WHERE offline_event_id=? "
+                "AND state IN ('PENDING','CLAIMED')",
+                (event_id,),
+            )
+            self._conn.commit()
+
     async def get_schedule(self, bot_id: str, schedule_date: str) -> DailySchedule | None:
         async with self._lock:
             row = self._conn.execute(

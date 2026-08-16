@@ -21,19 +21,20 @@ from .availability import (
 )
 from .config import PluginSettings, load_settings
 from .llm_service import LLMService
-from .models import OfflineEvent, OfflineEventType, PresenceState
+from .models import DailySchedule, OfflineEvent, OfflineEventType, PresenceState
 from .prompts import pre_away_continuity_prompt
 from .repository import Repository
 from .runtime import RuntimeService
 
 PLUGIN_NAME = "astrbot_plugin_tiangan_schedule"
+SCHEDULE_LOGIC_VERSION = 2
 
 
 @register(
     PLUGIN_NAME,
     "菌菌",
     "随机作息、离线监测器、离线信箱与回归回复",
-    "2.3",
+    "2.4",
     "https://github.com/ff302dq-cyber/astrbot_plugin_schedule",
 )
 class TianganSchedulePlugin(Star):
@@ -98,6 +99,7 @@ class TianganSchedulePlugin(Star):
     def _schedule_fingerprint(self) -> str:
         settings = self.settings
         payload = {
+            "schedule_logic_version": SCHEDULE_LOGIC_VERSION,
             "bot_name": settings.bot_name,
             "timezone": settings.timezone,
             "wake": [settings.wake_start, settings.wake_end],
@@ -581,8 +583,32 @@ class TianganSchedulePlugin(Star):
 
         bot_id = str(event.get_self_id() or "")
         now = self._now(bot_id)
-        await self._runtime(bot_id).adjust_future_schedule(bot_id, now)
-        yield event.plain_result("作息表已经重新调整好了。")
+        schedule = await self._runtime(bot_id).adjust_future_schedule(bot_id, now)
+        lines = ["作息表已经重新调整好了。"]
+        lines.extend(self._schedule_lines(schedule, now, include_away=True))
+        yield event.plain_result("\n".join(lines))
+
+    @staticmethod
+    def _schedule_lines(
+        schedule: DailySchedule, now: datetime, *, include_away: bool
+    ) -> list[str]:
+        lines = [
+            f"日期：{schedule.schedule_date}",
+            f"起床：{schedule.wake_at:%H:%M}",
+            f"睡觉：{schedule.sleep_at:%Y-%m-%d %H:%M}",
+        ]
+        if include_away:
+            starts = [
+                item.start_at.strftime("%H:%M")
+                for item in sorted(schedule.events, key=lambda event: event.start_at)
+                if item.event_type == OfflineEventType.DAYTIME_AWAY
+                and item.end_at > now
+            ]
+            lines.append(
+                "后续可能暂时离开："
+                + ("、".join(starts) if starts else "今天暂无新的时段")
+            )
+        return lines
 
     @filter.command("今日作息")
     async def today_schedule(self, event: AstrMessageEvent):
@@ -593,16 +619,13 @@ class TianganSchedulePlugin(Star):
         if not schedule:
             yield event.plain_result("今日作息尚未生成。")
             return
-        lines = [
-            f"日期：{schedule.schedule_date}",
-            f"起床：{schedule.wake_at:%H:%M}",
-            f"睡觉：{schedule.sleep_at:%Y-%m-%d %H:%M}",
-        ]
+        lines = self._schedule_lines(schedule, now, include_away=False)
         if self.settings.show_precise_schedule:
             starts = [
                 item.start_at.strftime("%H:%M")
                 for item in sorted(schedule.events, key=lambda event: event.start_at)
                 if item.event_type == OfflineEventType.DAYTIME_AWAY
+                and item.end_at > now
             ]
             if starts:
                 lines.extend(["", "可能暂时离开：" + "、".join(starts)])

@@ -10,6 +10,13 @@ from zoneinfo import ZoneInfo
 from .config import PluginSettings
 from .models import DailySchedule, OfflineEvent, OfflineEventType
 
+SLEEP_EVENT_ID_VERSION = 2
+
+
+def sleep_event_id(bot_id: str, schedule_date: str) -> str:
+    """Return the stable ID for the current logical-day sleep semantics."""
+    return f"sleep-v{SLEEP_EVENT_ID_VERSION}-{bot_id}-{schedule_date}"
+
 
 class RandomSource(Protocol):
     def randint(self, a: int, b: int) -> int: ...
@@ -119,6 +126,10 @@ class ScheduleGenerator:
         sleep_at = sample_window(
             day, self.settings.sleep_start, self.settings.sleep_end, tz, self.rng
         )
+        # schedule_date 表示“这次起床后开始的一天”。如果睡眠时钟落在
+        # 起床之前（例如起床 07:00、睡觉 01:00），该睡点属于次日凌晨。
+        if sleep_at <= wake_at:
+            sleep_at += timedelta(days=1)
         events: list[OfflineEvent] = []
         if self.settings.daytime_enabled and not self.settings.daytime_reasons_error:
             events.extend(self._daytime_events(bot_id, day, wake_at, sleep_at))
@@ -137,7 +148,7 @@ class ScheduleGenerator:
         reason = self.settings.night_reason
         monitor = self._monitor_text(self.rng.choice(reason.monitor_messages))
         return OfflineEvent(
-            id=f"sleep-{schedule.bot_id}-{schedule.schedule_date}",
+            id=sleep_event_id(schedule.bot_id, schedule.schedule_date),
             bot_id=schedule.bot_id,
             schedule_date=schedule.schedule_date,
             event_type=OfflineEventType.NIGHT_SLEEP,
